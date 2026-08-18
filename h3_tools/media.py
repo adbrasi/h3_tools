@@ -20,13 +20,15 @@ class MediaError(ValueError):
 def resample_indices(n_src, src_fps, target_fps=TARGET_FPS):
     """Source-frame index per output frame, preserving real duration.
 
-    Output frame i takes source frame min(round(i * src_fps / target), n-1),
-    for i in 0 .. floor(duration * target) - 1.
+    Output frame i takes source frame min(floor(i * src_fps / target + 0.5),
+    n-1), for i in 0 .. floor(duration * target) - 1. Arithmetic rounding on
+    purpose: Python's banker's round() gives an uneven duplication cadence at
+    half-integer ratios (e.g. 12->24 fps duplicating frames 3x/1x/3x/1x).
     """
     if n_src <= 0 or src_fps <= 0:
         return []
     count = int(math.floor((n_src / src_fps) * target_fps))
-    return [min(round(i * src_fps / target_fps), n_src - 1) for i in range(count)]
+    return [min(int(i * src_fps / target_fps + 0.5), n_src - 1) for i in range(count)]
 
 
 def _has_audio(audio):

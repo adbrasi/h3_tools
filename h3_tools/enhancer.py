@@ -137,7 +137,10 @@ def cache_key(prompt, ref_stats, model, system, vision, seed):
 def cache_get(cache_dir, key):
     try:
         with open(os.path.join(cache_dir, key + ".json"), "r", encoding="utf-8") as f:
-            value = json.load(f).get("prompt_final")
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        value = data.get("prompt_final")
         return value if isinstance(value, str) and value else None
     except (OSError, ValueError):
         return None
@@ -157,20 +160,34 @@ def cache_put(cache_dir, key, prompt_final, model, max_entries=CACHE_MAX_ENTRIES
         pass  # pruning is best-effort; a failed prune must not kill the job
 
 
-def enhance(prompt, refs, *, api_key, model, system_prompt, manifest,
-            vision_parts=None, timeout=120, post=None):
+def enhance(prompt, *, api_key, model, system_prompt, manifest,
+            vision_parts=None, timeout=120, post=None, sleep=None):
     """Call OpenRouter and return prompt_final. 3 total attempts:
-    network / 429 / 5xx retry as-is; the first parse failure retries with a
-    "JSON only" nudge; other 4xx fail immediately. Never falls back silently.
+    network / 429 / 5xx retry with a short Retry-After-aware backoff; a parse
+    failure retries with a "JSON only" nudge (kept for later attempts); other
+    4xx fail immediately. Never falls back silently to the raw prompt.
     """
     if post is None:
         import requests
         post = requests.post
+    if sleep is None:
+        sleep = time.sleep
+
+    def backoff(attempt, resp=None):
+        if attempt >= 2:
+            return  # that was the final attempt; the error is about to raise
+        delay = 1.0 * (attempt + 1)
+        headers = getattr(resp, "headers", None) or {}
+        try:
+            delay = min(30.0, float(headers.get("Retry-After") or delay))
+        except (TypeError, ValueError):
+            pass
+        sleep(delay)
 
     user_text = "Draft prompt:\n%s\n\nReferences:\n%s" % (prompt, manifest)
     nudged = False
     last_error = "no attempts made"
-    for _ in range(3):
+    for attempt in range(3):
         system_text = system_prompt
         if nudged:
             system_text += "\nReturn ONLY the JSON object, nothing else."
@@ -184,18 +201,22 @@ def enhance(prompt, refs, *, api_key, model, system_prompt, manifest,
                          {"role": "user", "content": user_content}],
             "response_format": {"type": "json_object"},
             "temperature": 0.8,
+            # dropped upstream by models without reasoning support
+            "reasoning": {"effort": "medium"},
         }
         try:
             resp = post(OPENROUTER_URL,
                         headers={"Authorization": "Bearer %s" % api_key,
                                  "Content-Type": "application/json"},
-                        json=body, timeout=timeout)
+                        json=body, timeout=(10, timeout))
         except Exception as e:
             last_error = _redact(str(e), api_key)
+            backoff(attempt)
             continue
         status = getattr(resp, "status_code", 0)
         if status == 429 or status >= 500:
             last_error = "HTTP %d: %s" % (status, _excerpt(resp, api_key))
+            backoff(attempt, resp)
             continue
         if status != 200:
             raise EnhancerError("OpenRouter request failed (HTTP %d): %s"
@@ -204,6 +225,7 @@ def enhance(prompt, refs, *, api_key, model, system_prompt, manifest,
             content = resp.json()["choices"][0]["message"]["content"]
         except Exception:
             last_error = "malformed OpenRouter response body: %s" % _excerpt(resp, api_key)
+            backoff(attempt, resp)
             continue
         try:
             return parse_response(content)

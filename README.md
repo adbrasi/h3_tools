@@ -66,7 +66,11 @@ native ordinals. Caps: 9 images, 3 videos, 3 standalone audios.
 ## Enhancer
 
 Set `enhance_prompt` and either fill `openrouter_api_key` or export
-`OPENROUTER_API_KEY` (recommended for serverless). The LLM receives the draft
+`OPENROUTER_API_KEY`. Prefer the env var on shared or serverless hosts:
+ComfyUI itself includes widget values in execution-error payloads
+(`/history`), which is outside this pack's control. Requests default to
+`reasoning: {"effort": "medium"}` (ignored by non-reasoning models) and retry
+429/5xx with `Retry-After`-aware backoff. The LLM receives the draft
 + a reference manifest (+ downscaled images when `enhancer_vision` is on),
 must answer `{"prompt_final": "..."}`, and its output is sanitized: invented
 `@tokens` are stripped with a warning; a dropped `@name` only logs a warning.

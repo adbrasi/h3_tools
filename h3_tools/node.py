@@ -63,7 +63,10 @@ class H3RefToVideoPro(io.ComfyNode):
                     tooltip="OpenRouter model slug (free text)."),
                 io.String.Input("openrouter_api_key", default="",
                     tooltip="Empty falls back to the OPENROUTER_API_KEY environment "
-                            "variable. Never logged or cached."),
+                            "variable. Never logged or cached by this pack — but "
+                            "ComfyUI itself includes widget values in execution-error "
+                            "payloads (/history), so prefer the env var on shared or "
+                            "serverless hosts."),
                 io.Boolean.Input("enhancer_vision", default=False,
                     tooltip="Send reference images (and one frame per video) to the LLM."),
                 io.String.Input("system_prompt_override", multiline=True, default="",
@@ -90,9 +93,16 @@ class H3RefToVideoPro(io.ComfyNode):
         except refs.RefError as e:
             return str(e)
         for r in ref_list:
-            if not folder_paths.exists_annotated_filepath(r.file):
-                return ('reference file not found: "%s" (resolved to %s)'
-                        % (r.file, folder_paths.get_annotated_filepath(r.file)))
+            try:
+                if folder_paths.exists_annotated_filepath(r.file):
+                    continue
+                resolved = folder_paths.get_annotated_filepath(r.file)
+            except (OSError, ValueError):
+                # e.g. a path-traversal file value; still a message, never a raise
+                return ('reference file not found or outside the input '
+                        'directory: "%s"' % r.file)
+            return ('reference file not found: "%s" (resolved to %s)'
+                    % (r.file, resolved))
         unknown = refs.unknown_mentions(prompt, ref_list)
         if unknown:
             return _unknown_mentions_message(unknown, ref_list)
@@ -112,7 +122,7 @@ class H3RefToVideoPro(io.ComfyNode):
                 try:
                     st = os.stat(folder_paths.get_annotated_filepath(r.file))
                     stats.append([r.file, st.st_mtime_ns, st.st_size])
-                except OSError:
+                except (OSError, ValueError):
                     stats.append([r.file, -1, -1])
             data["_file_stats"] = stats
             blob = json.dumps(data, sort_keys=True, ensure_ascii=False)
@@ -137,6 +147,10 @@ class H3RefToVideoPro(io.ComfyNode):
                 payloads[r.name] = media.load_image_ref(r.file)
             elif r.type == "video":
                 payload = media.load_video_ref(r.file, r.name)
+                if r.use_soundtrack:
+                    # resolve now: a missing audio track must fail before any
+                    # (paid) enhancer call, not after
+                    payload["soundtrack"] = media.soundtrack_of(payload, r.name)
                 payloads[r.name] = payload
                 durations[r.name] = payload["duration"]
             else:
@@ -159,28 +173,25 @@ class H3RefToVideoPro(io.ComfyNode):
                          ", ".join("@" + n for n in unmentioned))
 
         # native Autogrow dicts, keys paired by trailing index (soundtrack N <-> video N)
-        ref_images, ref_videos, ref_video_audios, ref_audios = {}, {}, {}, {}
-        image_i = video_i = audio_i = 0
-        for r in ref_list:
-            if r.type == "image":
-                ref_images["ref_image_%d" % image_i] = payloads[r.name]
-                image_i += 1
-            elif r.type == "video":
-                payload = payloads[r.name]
-                ref_videos["ref_video_%d" % video_i] = payload["frames"]
-                if r.use_soundtrack:
-                    ref_video_audios["ref_video_audio_%d" % video_i] = \
-                        media.soundtrack_of(payload, r.name)
-                video_i += 1
+        groups = {"ref_images": {}, "ref_videos": {}, "ref_video_audios": {}, "ref_audios": {}}
+        for name, group, key in refs.autogrow_slots(ref_list):
+            payload = payloads[name]
+            if group == "ref_images":
+                groups[group][key] = payload
+            elif group == "ref_videos":
+                groups[group][key] = payload["frames"]
+            elif group == "ref_video_audios":
+                groups[group][key] = payload["soundtrack"]
             else:
-                ref_audios["ref_audio_%d" % audio_i] = payloads[r.name]["audio"]
-                audio_i += 1
+                groups[group][key] = payload["audio"]
 
         out = MiniMaxH3ReferenceToVideo.execute(
             clip=clip, vae=vae, audio_vae=audio_vae, prompt=final_prompt,
             width=width, height=height, length=length, ref_image_size=ref_image_size,
-            ref_images=ref_images or None, ref_videos=ref_videos or None,
-            ref_video_audios=ref_video_audios or None, ref_audios=ref_audios or None)
+            ref_images=groups["ref_images"] or None,
+            ref_videos=groups["ref_videos"] or None,
+            ref_video_audios=groups["ref_video_audios"] or None,
+            ref_audios=groups["ref_audios"] or None)
         cond, latent = out.args
         return io.NodeOutput(cond, latent, final_prompt)
 
@@ -201,9 +212,12 @@ class H3RefToVideoPro(io.ComfyNode):
             try:
                 st = os.stat(folder_paths.get_annotated_filepath(r.file))
                 mtime_ns, size = st.st_mtime_ns, st.st_size
-            except OSError:
+            except (OSError, ValueError):
                 mtime_ns, size = -1, -1
+            # use_soundtrack changes the manifest the LLM sees, so it must
+            # change the cache key too
             ref_stats.append({"name": r.name, "type": r.type, "file": r.file,
+                              "use_soundtrack": r.use_soundtrack,
                               "mtime_ns": mtime_ns, "size": size})
         key = enhancer.cache_key(prompt, ref_stats, model, system_prompt, vision, seed)
         cache_dir = os.path.join(folder_paths.get_user_directory(),
@@ -228,7 +242,7 @@ class H3RefToVideoPro(io.ComfyNode):
                 vision_parts.append({"type": "image_url", "image_url": {"url": url}})
 
         manifest = enhancer.build_manifest(ref_list, durations)
-        result = enhancer.enhance(prompt, ref_list, api_key=api_key, model=model,
+        result = enhancer.enhance(prompt, api_key=api_key, model=model,
                                   system_prompt=system_prompt, manifest=manifest,
                                   vision_parts=vision_parts)
         clean, warnings = enhancer.sanitize_output(result, ref_list, prompt)

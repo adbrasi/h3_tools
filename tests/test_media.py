@@ -1,3 +1,5 @@
+from collections import Counter
+
 from h3_tools.media import resample_indices
 
 
@@ -30,11 +32,23 @@ def test_30fps():
     assert_valid(idx, 30)
 
 
-def test_60fps_picks_alternating():
+def test_60fps_alternates_evenly():
     idx = resample_indices(60, 60.0)  # 1s -> 24 frames, every 2.5th source frame
     assert len(idx) == 24
-    assert idx[:4] == [0, 2, 5, 8]
+    assert idx[:5] == [0, 3, 5, 8, 10]  # steps alternate 3,2,3,2 (no jitter)
+    steps = [b - a for a, b in zip(idx, idx[1:])]
+    assert set(steps) == {2, 3}
     assert_valid(idx, 60)
+
+
+def test_half_rate_upsample_duplicates_uniformly():
+    idx = resample_indices(24, 12.0)  # 2s at 12fps -> 48 frames at 24fps
+    assert len(idx) == 48
+    counts = Counter(idx)
+    # interior frames duplicate uniformly (no 3x/1x cadence); only the two
+    # edge frames absorb the phase offset and the end clamp
+    assert all(counts[k] == 2 for k in range(1, 23))
+    assert_valid(idx, 24)
 
 
 def test_tiny_clip_returns_short_list():

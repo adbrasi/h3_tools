@@ -107,6 +107,18 @@ def test_cache_key_stable_and_seed_sensitive():
     assert len(k1) == 64
 
 
+def test_cache_key_sensitive_to_every_field():
+    stats = [{"name": "a", "type": "image", "file": "a.png",
+              "mtime_ns": 1, "size": 2}]
+    base = enhancer.cache_key("p", stats, "m", "s", False, 0)
+    assert enhancer.cache_key("q", stats, "m", "s", False, 0) != base
+    assert enhancer.cache_key("p", stats, "m2", "s", False, 0) != base
+    assert enhancer.cache_key("p", stats, "m", "s2", False, 0) != base
+    assert enhancer.cache_key("p", stats, "m", "s", True, 0) != base
+    changed = [dict(stats[0], use_soundtrack=True)]
+    assert enhancer.cache_key("p", changed, "m", "s", False, 0) != base
+
+
 def test_cache_roundtrip(tmp_path):
     enhancer.cache_put(str(tmp_path), "k" * 64, "the prompt", "model/x")
     assert enhancer.cache_get(str(tmp_path), "k" * 64) == "the prompt"
@@ -116,6 +128,8 @@ def test_cache_miss_and_corrupt(tmp_path):
     assert enhancer.cache_get(str(tmp_path), "absent") is None
     (tmp_path / "bad.json").write_text("{not json")
     assert enhancer.cache_get(str(tmp_path), "bad") is None
+    (tmp_path / "arr.json").write_text("[]")  # valid JSON, wrong shape
+    assert enhancer.cache_get(str(tmp_path), "arr") is None
 
 
 def test_cache_prune_keeps_newest(tmp_path):
@@ -132,34 +146,39 @@ def test_cache_prune_keeps_newest(tmp_path):
 # ---- enhance (HTTP loop) ------------------------------------------------
 
 class FakeResp:
-    def __init__(self, status, content=None, text=""):
+    def __init__(self, status, content=None, text="", headers=None):
         self.status_code = status
         self._content = content
         self.text = text or (content or "")
+        self.headers = headers or {}
 
     def json(self):
         return {"choices": [{"message": {"content": self._content}}]}
 
 
 def call(post, **kw):
-    args = dict(prompt="@garota dança", refs=REFS, api_key="sk-secret-123",
+    args = dict(prompt="@garota dança", api_key="sk-secret-123",
                 model="m/x", system_prompt="SYS", manifest="- @garota (image)",
-                vision_parts=None, post=post)
+                vision_parts=None, post=post, sleep=lambda s: None)
     args.update(kw)
     return enhancer.enhance(**args)
 
 
 def test_enhance_success_first_try():
     bodies = []
+    timeouts = []
 
     def post(url, headers=None, json=None, timeout=None):
         bodies.append(json)
+        timeouts.append(timeout)
         return FakeResp(200, '{"prompt_final": "rich"}')
 
     assert call(post) == "rich"
     assert bodies[0]["response_format"] == {"type": "json_object"}
     assert bodies[0]["temperature"] == 0.8
+    assert bodies[0]["reasoning"] == {"effort": "medium"}
     assert bodies[0]["messages"][0]["role"] == "system"
+    assert timeouts[0] == (10, 120)  # fast connect failure, generous read
 
 
 def test_enhance_retries_5xx_then_succeeds():
@@ -171,6 +190,21 @@ def test_enhance_retries_5xx_then_succeeds():
 def test_enhance_three_5xx_fails_with_excerpt():
     with pytest.raises(EnhancerError, match="boom-detail"):
         call(lambda *a, **k: FakeResp(500, text="boom-detail"))
+
+
+def test_enhance_backoff_honors_retry_after():
+    sleeps = []
+    seq = [FakeResp(429, text="slow down", headers={"Retry-After": "3"}),
+           FakeResp(200, '{"prompt_final": "ok"}')]
+    assert call(lambda *a, **k: seq.pop(0), sleep=sleeps.append) == "ok"
+    assert sleeps == [3.0]
+
+
+def test_enhance_no_sleep_after_final_attempt():
+    sleeps = []
+    with pytest.raises(EnhancerError):
+        call(lambda *a, **k: FakeResp(500, text="err"), sleep=sleeps.append)
+    assert sleeps == [1.0, 2.0]  # backoff between attempts only
 
 
 def test_enhance_401_fails_immediately():

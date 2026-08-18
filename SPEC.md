@@ -209,8 +209,9 @@ them — so results are byte-identical to a hand-wired native graph:
   `[T, H, W, C]`, audio, fps. (Equivalent to wiring LoadVideo → GetVideoComponents.)
   Then the pack's one piece of media logic, **resample to 24 fps preserving real
   duration** (no native equivalent exists): output frame `i` takes source frame
-  `min(round(i * src_fps / 24), n_src - 1)`, for `i` in
-  `0 .. floor(duration * 24) - 1`. Enforce ≥ 5
+  `min(floor(i * src_fps / 24 + 0.5), n_src - 1)`, for `i` in
+  `0 .. floor(duration * 24) - 1` (arithmetic rounding — banker's `round()`
+  gives an uneven duplication cadence at half-integer ratios). Enforce ≥ 5
   frames after resampling (error: "reference video @name is shorter than ~0.21s").
   Do NOT trim to the `17k+5` grid here — the native H3 node does that.
 - **Video soundtrack** (`use_soundtrack: true`): the audio output of
@@ -226,9 +227,11 @@ copying its body; these are stable public nodes that API workflows depend on.
 
 ### 5.3 Mention grammar and resolution (`refs.py`)
 
-- **Token regex**: `(?<![A-Za-z0-9_])@([A-Za-z0-9_]{1,64})` — an `@` not glued to a
-  preceding word character, capturing the name. Matching against reference names is
-  case-insensitive (names are stored lowercase).
+- **Token regex**: `(?<![A-Za-z0-9_])@([A-Za-z0-9_]{1,64})(?![A-Za-z0-9_])` — an `@`
+  not glued to a preceding word character, capturing the name; the trailing lookahead
+  keeps >64-char tokens (never valid names) as plain text instead of partially
+  matching. Matching against reference names is case-insensitive (names are stored
+  lowercase).
 - **Ordinal assignment** (must mirror the native presentation exactly):
   1. images in array order → `<Picture 1..N>`; picture counter `i`.
   2. videos in array order → `<Video 1..K>`; a video with `use_soundtrack` first
@@ -257,8 +260,12 @@ LLM reads and must preserve `@name` tokens, never raw `<Picture i>` tags.
   `Authorization: Bearer <key>` (widget value, else env `OPENROUTER_API_KEY`, else
   error), `Content-Type: application/json`. Body:
   `model`, `messages` (see below), `response_format: {"type": "json_object"}`,
-  `temperature: 0.8`. Timeout 120 s. The key must never appear in logs, error
-  messages, or any output socket.
+  `temperature: 0.8`, `reasoning: {"effort": "medium"}` (sent unconditionally;
+  OpenRouter drops it upstream for non-reasoning models). Connect timeout 10 s,
+  read timeout 120 s. The key must never appear in logs, error messages, or any
+  output socket. Caveat outside the pack's control: ComfyUI includes widget
+  values in execution-error payloads (`/history`), so shared/serverless hosts
+  should use the env var, not the widget (documented in the tooltip + README).
 - **Messages**: one `system` (built-in prompt below, or `system_prompt_override`
   verbatim) + one `user`. User content parts:
   1. text: the raw prompt, then a reference manifest — one line per ref:
@@ -273,18 +280,22 @@ LLM reads and must preserve `@name` tokens, never raw `<Picture i>` tags.
   describe media content not shown; output only `{"prompt_final": "..."}`.
 - **Response parsing**: strip code fences if present → first balanced `{...}` →
   `json.loads` → `prompt_final` must be a non-empty string.
-- **Retry/error policy**: up to 3 total attempts. HTTP/network/5xx failures retry
-  as-is; a parse failure retries once with an appended system line "Return ONLY the
-  JSON object, nothing else.". After 3 failures → execution error carrying the
-  provider's message (first ~200 chars), never a silent fallback to the raw prompt
-  (silent quality degradation is worse than a visible failure).
+- **Retry/error policy**: up to 3 total attempts. Network / 429 / 5xx failures
+  retry with a short backoff (1 s then 2 s, overridden by `Retry-After` capped at
+  30 s; no sleep after the final attempt); a parse failure retries with an appended
+  system line "Return ONLY the JSON object, nothing else." (the nudge stays for any
+  later attempt); other 4xx fail immediately. After 3 failures → execution error
+  carrying the provider's message (first ~200 chars), never a silent fallback to
+  the raw prompt (silent quality degradation is worse than a visible failure).
 - **Post-enhancement sanitation** (asymmetric on purpose): `@name` tokens in the
   **user's** prompt that don't resolve = validation error (§5.1). Unknown `@` tokens in
   the **LLM's** output = stripped, with a logged warning (a hallucinating LLM must not
   kill a serverless job). If the LLM dropped a `@name` the user had written, log a
   warning; the ref still reaches the model unmentioned.
 - **Disk cache**: key = sha256 of canonical JSON
-  `{prompt, refs: [{name, type, file, mtime_ns, size}], model, system, vision, seed}`;
+  `{prompt, refs: [{name, type, file, use_soundtrack, mtime_ns, size}], model,
+  system, vision, seed}` (`use_soundtrack` changes the manifest the LLM sees, so
+  it must change the key);
   value = `{"prompt_final": ..., "model": ..., "created": ...}` stored as
   `<user_dir>/h3_tools/enhancer_cache/<hash>.json`
   (`folder_paths.get_user_directory()`); prune oldest beyond 500 entries. Cache means
