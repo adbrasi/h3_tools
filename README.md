@@ -68,9 +68,10 @@ native ordinals. Caps: 9 images, 3 videos, 3 standalone audios.
 Set `enhance_prompt` and either fill `openrouter_api_key` or export
 `OPENROUTER_API_KEY`. Prefer the env var on shared or serverless hosts:
 ComfyUI itself includes widget values in execution-error payloads
-(`/history`), which is outside this pack's control. Requests send
-`reasoning: {"effort": <enhancer_reasoning>}` (default `low`; ignored by
-non-reasoning models) and retry
+(`/history`), which is outside this pack's control. Requests route to the fastest provider (`provider.sort: throughput`), cap
+`max_tokens` per reasoning level, and default `enhancer_reasoning` to `none`
+(thinking off — reasoning tokens are generated serially and dominate
+latency); they retry
 429/5xx with `Retry-After`-aware backoff, logging every retry; set
 `enhancer_model_fallback` to try a second model when the main one fails for
 good (timeout, provider error, unparseable output). The LLM receives the draft

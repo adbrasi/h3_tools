@@ -21,6 +21,19 @@ from .system_prompts import DEFAULT_SYSTEM_PROMPT, SYSTEM_PROMPTS  # noqa: F401
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 CACHE_MAX_ENTRIES = 500
 
+# max_tokens is also the base OpenRouter derives the reasoning budget from
+# (budget = clamp(max_tokens * effort_ratio, 1024, 128000)), so each effort
+# level needs enough headroom for its thinking PLUS the ~900-token answer.
+# Without max_tokens the ratio applies to the provider's default (can be tens
+# of thousands) — unbounded serial reasoning was the 212s-per-call pathology.
+MAX_TOKENS_BY_EFFORT = {
+    "none": 1200,
+    "low": 4000,
+    "medium": 6000,
+    "high": 9000,
+    "xhigh": 12000,
+}
+
 
 class EnhancerError(RuntimeError):
     """User-facing enhancer failure; the message is shown as-is."""
@@ -147,13 +160,15 @@ def cache_put(cache_dir, key, prompt_final, model, max_entries=CACHE_MAX_ENTRIES
 
 
 def enhance(prompt, *, api_key, model, system_prompt, manifest,
-            target_duration=None, vision_parts=None, reasoning_effort="low",
-            timeout=60, post=None, sleep=None):
+            target_duration=None, vision_parts=None, reasoning_effort="none",
+            timeout=60, deadline=None, post=None, sleep=None):
     """Call OpenRouter and return prompt_final. 3 total attempts:
     network / 429 / 5xx retry with a short Retry-After-aware backoff; a parse
-    failure retries with a "JSON only" nudge (kept for later attempts); other
-    4xx fail immediately. A timeout also fails immediately — a model that
-    blew the read budget will blow it again, and the user is waiting.
+    failure retries with a "JSON only" nudge (kept for later attempts); a 400
+    rejecting the reasoning field retries once without it (mandatory-reasoning
+    models); other 4xx fail immediately. A timeout also fails immediately —
+    a model that blew the read budget will blow it again, and the user is
+    waiting. `deadline` (time.monotonic value) caps the whole loop.
     Never falls back silently to the raw prompt.
     """
     if post is None:
@@ -180,8 +195,13 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
         user_text = ("Target video duration: %.1f seconds (24 fps).\n\n"
                      % target_duration) + user_text
     nudged = False
+    reasoning_stripped = False
     last_error = "no attempts made"
     for attempt in range(3):
+        if deadline is not None and time.monotonic() > deadline:
+            raise EnhancerError(
+                "enhancer total time budget exceeded before attempt %d (%s)"
+                % (attempt + 1, last_error))
         system_text = system_prompt
         if nudged:
             system_text += "\nReturn ONLY the JSON object, nothing else."
@@ -194,10 +214,21 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
             "messages": [{"role": "system", "content": system_text},
                          {"role": "user", "content": user_content}],
             "response_format": {"type": "json_object"},
-            "temperature": 0.8,
-            # dropped upstream by models without reasoning support
-            "reasoning": {"effort": reasoning_effort},
+            # low temperature: fewer malformed-JSON regenerations
+            "temperature": 0.4,
+            "max_tokens": MAX_TOKENS_BY_EFFORT.get(reasoning_effort, 4000),
+            # default routing optimizes price (often the slowest provider);
+            # we optimize tokens/sec, which dominates an ~800-token answer
+            "provider": {"sort": "throughput"},
+            # surfaces completion/reasoning token counts for the timing log
+            "usage": {"include": True},
         }
+        if not reasoning_stripped:
+            if reasoning_effort == "none":
+                body["reasoning"] = {"enabled": False}
+            else:
+                body["reasoning"] = {"effort": reasoning_effort}
+        attempt_started = time.monotonic()
         try:
             resp = post(OPENROUTER_URL,
                         headers={"Authorization": "Bearer %s" % api_key,
@@ -217,14 +248,29 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
             backoff(attempt, last_error, resp)
             continue
         if status != 200:
+            # mandatory-reasoning models reject disabling it; retry without
+            # the field so the provider default applies
+            if (status == 400 and "reasoning" in body
+                    and not reasoning_stripped
+                    and "reasoning" in str(getattr(resp, "text", "")).lower()):
+                reasoning_stripped = True
+                logging.warning("h3_tools: model %s rejected the reasoning field; "
+                                "retrying without it", model)
+                continue
             raise EnhancerError("OpenRouter request failed (HTTP %d): %s"
                                 % (status, _excerpt(resp, api_key)))
         try:
-            content = resp.json()["choices"][0]["message"]["content"]
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"]
         except Exception:
             last_error = "malformed OpenRouter response body: %s" % _excerpt(resp, api_key)
             backoff(attempt, last_error, resp)
             continue
+        usage = data.get("usage") or {}
+        details = usage.get("completion_tokens_details") or {}
+        logging.info("h3_tools: enhancer call ok in %.1fs (completion=%s tokens, "
+                     "reasoning=%s)", time.monotonic() - attempt_started,
+                     usage.get("completion_tokens"), details.get("reasoning_tokens"))
         try:
             return parse_response(content)
         except EnhancerError as e:
@@ -238,16 +284,18 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
     raise EnhancerError("prompt enhancer failed after 3 attempts: %s" % last_error)
 
 
-def enhance_with_fallback(prompt, *, models, **kwargs):
+def enhance_with_fallback(prompt, *, models, total_timeout=180, **kwargs):
     """Try each model in order with the full enhance() policy.
 
-    Returns (model_used, prompt_final); re-raises the last EnhancerError when
-    every model failed.
+    total_timeout caps the WHOLE loop (all attempts of all models) so retries
+    can never stack unbounded. Returns (model_used, prompt_final); re-raises
+    the last EnhancerError when every model failed.
     """
+    deadline = (time.monotonic() + total_timeout) if total_timeout else None
     last_error = None
     for i, model in enumerate(models):
         try:
-            return model, enhance(prompt, model=model, **kwargs)
+            return model, enhance(prompt, model=model, deadline=deadline, **kwargs)
         except EnhancerError as e:
             last_error = e
             if i + 1 < len(models):

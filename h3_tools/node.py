@@ -68,10 +68,11 @@ class H3RefToVideoPro(io.ComfyNode):
                             "fails for good (timeout, provider error, unparseable "
                             "output). Empty disables the fallback."),
                 io.Combo.Input("enhancer_reasoning",
-                    options=["low", "medium", "high", "xhigh"], default="low",
-                    tooltip="Reasoning effort sent to OpenRouter (dropped upstream "
-                            "by models without reasoning support). Higher = better "
-                            "structure, slower and pricier."),
+                    options=["none", "low", "medium", "high", "xhigh"], default="none",
+                    tooltip="Reasoning effort sent to OpenRouter. 'none' disables "
+                            "thinking (fastest — reasoning tokens are generated "
+                            "serially and dominate wall-clock). Higher = better "
+                            "structure, much slower and pricier."),
                 io.String.Input("openrouter_api_key", default="",
                     tooltip="Empty falls back to the OPENROUTER_API_KEY environment "
                             "variable. Never logged or cached by this pack — but "

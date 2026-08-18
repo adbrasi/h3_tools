@@ -185,8 +185,11 @@ def test_enhance_success_first_try():
 
     assert call(post) == "rich"
     assert bodies[0]["response_format"] == {"type": "json_object"}
-    assert bodies[0]["temperature"] == 0.8
-    assert bodies[0]["reasoning"] == {"effort": "low"}  # default effort
+    assert bodies[0]["temperature"] == 0.4
+    assert bodies[0]["reasoning"] == {"enabled": False}  # default: no thinking
+    assert bodies[0]["max_tokens"] == 1200
+    assert bodies[0]["provider"] == {"sort": "throughput"}
+    assert bodies[0]["usage"] == {"include": True}
     assert bodies[0]["messages"][0]["role"] == "system"
     assert timeouts[0] == (10, 60)  # fast connect failure, 60s read budget
 
@@ -311,6 +314,34 @@ def test_enhance_sends_chosen_reasoning_effort():
 
     call(post, reasoning_effort="xhigh")
     assert bodies[0]["reasoning"] == {"effort": "xhigh"}
+    assert bodies[0]["max_tokens"] == 12000  # room for thinking + the answer
+
+
+def test_enhance_strips_rejected_reasoning_field():
+    bodies = []
+    seq = [FakeResp(400, text='{"error": "reasoning is not supported"}'),
+           FakeResp(200, '{"prompt_final": "ok"}')]
+
+    def post(url, headers=None, json=None, timeout=None):
+        bodies.append(json)
+        return seq.pop(0)
+
+    assert call(post) == "ok"
+    assert "reasoning" in bodies[0]
+    assert "reasoning" not in bodies[1]
+
+
+def test_enhance_deadline_stops_the_loop():
+    import time as _time
+    calls = []
+
+    def post(*a, **k):
+        calls.append(1)
+        return FakeResp(500, text="err")
+
+    with pytest.raises(EnhancerError, match="time budget"):
+        call(post, deadline=_time.monotonic() - 1)
+    assert calls == []  # expired before the first attempt
 
 
 def test_cache_key_sensitive_to_reasoning():

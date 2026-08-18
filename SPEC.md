@@ -116,7 +116,7 @@ transport inputs, no state in `node.properties`**):
 | `enhance_prompt` | Boolean | `false` | master switch for the LLM enhancer |
 | `enhancer_model` | String | `"google/gemini-3-flash-preview"` | free text, OpenRouter model slug. NEVER a combo validated against a live API (breaks offline/headless validation) |
 | `enhancer_model_fallback` | String | `""` | optional second model slug, tried with the full retry policy when the main model fails for good (timeout, provider error, unparseable output); empty disables it. Cache entries are per-model |
-| `enhancer_reasoning` | Combo `low`\|`medium`\|`high`\|`xhigh` | `low` | reasoning effort sent to OpenRouter (dropped upstream by non-reasoning models); part of the cache key |
+| `enhancer_reasoning` | Combo `none`\|`low`\|`medium`\|`high`\|`xhigh` | `none` | reasoning effort sent to OpenRouter; `none` sends `{"enabled": false}` (fastest — reasoning tokens are serial and dominate wall-clock). Part of the cache key |
 | `openrouter_api_key` | String | `""` | empty → fall back to env `OPENROUTER_API_KEY`; missing both (with enhancer on) is an execution error |
 | `enhancer_vision` | Boolean | `false` | send reference images (and 1 frame per video) to the LLM |
 | `system_prompt_preset` | Combo (keys of `SYSTEM_PROMPTS`) | `default` | one shared core (official H3 six-section format from `guide.md` + shot-script craft rules + a full worked output example); presets differ only by their OBJECTIVE block: `default`, `multishot`, `single_take` |
@@ -265,12 +265,18 @@ LLM reads and must preserve `@name` tokens, never raw `<Picture i>` tags.
   `Authorization: Bearer <key>` (widget value, else env `OPENROUTER_API_KEY`, else
   error), `Content-Type: application/json`. Body:
   `model`, `messages` (see below), `response_format: {"type": "json_object"}`,
-  `temperature: 0.8`, `reasoning: {"effort": <enhancer_reasoning>}` (default
-  `low`; sent unconditionally — OpenRouter drops it upstream for non-reasoning
-  models). Connect timeout 10 s,
-  read timeout 60 s; a timeout fails immediately with a clear error instead of
-  retrying (a model that blew the budget will blow it again, and the user is
-  waiting). The key must never appear in logs, error messages, or any
+  `temperature: 0.4` (fewer malformed-JSON regenerations),
+  `max_tokens` per effort level (1200 for `none` up to 12000 for `xhigh` —
+  max_tokens is also the base OpenRouter derives the reasoning budget from, so
+  omitting it made thinking unbounded: the 212s-per-call pathology),
+  `provider: {"sort": "throughput"}` (default routing optimizes price, often the
+  slowest provider), `usage: {"include": true}` (logs completion/reasoning token
+  counts), and `reasoning`: `{"enabled": false}` for `none` (default) or
+  `{"effort": <level>}` otherwise — a 400 rejecting the field (mandatory-reasoning
+  models) retries once without it. Connect timeout 10 s, read timeout 60 s
+  (between-bytes); a timeout fails immediately with a clear error instead of
+  retrying; a 180 s total budget caps all attempts of all models combined.
+  The key must never appear in logs, error messages, or any
   output socket. Caveat outside the pack's control: ComfyUI includes widget
   values in execution-error payloads (`/history`), so shared/serverless hosts
   should use the env var, not the widget (documented in the tooltip + README).
