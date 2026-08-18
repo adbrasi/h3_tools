@@ -186,8 +186,8 @@ def test_enhance_success_first_try():
     assert call(post) == "rich"
     assert bodies[0]["response_format"] == {"type": "json_object"}
     assert "temperature" not in bodies[0]  # model default; reasoning models reject it
+    assert "max_tokens" not in bodies[0]  # owner decision: never cap the answer
     assert bodies[0]["reasoning"] == {"enabled": False}  # default: no thinking
-    assert bodies[0]["max_tokens"] == 2000
     assert bodies[0]["provider"] == {"sort": "throughput"}
     assert bodies[0]["usage"] == {"include": True}
     assert bodies[0]["messages"][0]["role"] == "system"
@@ -314,7 +314,6 @@ def test_enhance_sends_chosen_reasoning_effort():
 
     call(post, reasoning_effort="xhigh")
     assert bodies[0]["reasoning"] == {"effort": "xhigh"}
-    assert bodies[0]["max_tokens"] == 12000  # room for thinking + the answer
 
 
 def test_enhance_strips_rejected_reasoning_field():

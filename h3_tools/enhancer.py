@@ -21,18 +21,6 @@ from .system_prompts import DEFAULT_SYSTEM_PROMPT, SYSTEM_PROMPTS  # noqa: F401
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 CACHE_MAX_ENTRIES = 500
 
-# max_tokens is also the base OpenRouter derives the reasoning budget from
-# (budget = clamp(max_tokens * effort_ratio, 1024, 128000)), so each effort
-# level needs enough headroom for its thinking PLUS the ~900-token answer.
-# Without max_tokens the ratio applies to the provider's default (can be tens
-# of thousands) — unbounded serial reasoning was the 212s-per-call pathology.
-MAX_TOKENS_BY_EFFORT = {
-    "none": 2000,
-    "low": 4000,
-    "medium": 6000,
-    "high": 9000,
-    "xhigh": 12000,
-}
 
 
 class EnhancerError(RuntimeError):
@@ -214,9 +202,10 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
             "messages": [{"role": "system", "content": system_text},
                          {"role": "user", "content": user_content}],
             "response_format": {"type": "json_object"},
-            # no temperature: use each model's own default (reasoning models
-            # ignore or reject the parameter anyway)
-            "max_tokens": MAX_TOKENS_BY_EFFORT.get(reasoning_effort, 4000),
+            # no temperature and no max_tokens (owner decision): model defaults
+            # apply. NB: with reasoning enabled, the thinking budget then derives
+            # from the provider's default output cap — the 180s total budget and
+            # the read timeout are the guardrails.
             # default routing optimizes price (often the slowest provider);
             # we optimize tokens/sec, which dominates an ~800-token answer
             "provider": {"sort": "throughput"},

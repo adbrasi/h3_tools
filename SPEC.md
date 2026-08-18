@@ -265,11 +265,10 @@ LLM reads and must preserve `@name` tokens, never raw `<Picture i>` tags.
   `Authorization: Bearer <key>` (widget value, else env `OPENROUTER_API_KEY`, else
   error), `Content-Type: application/json`. Body:
   `model`, `messages` (see below), `response_format: {"type": "json_object"}`,
-  no `temperature` (each model's default; reasoning models ignore or reject it),
-  `max_tokens` per effort level (2000 for `none` up to 12000 for `xhigh` —
-  it caps reasoning AND answer combined, so every level reserves ~1-3k tokens of
-  answer headroom above the reasoning budget; omitting max_tokens made thinking
-  unbounded: the 212s-per-call pathology),
+  no `temperature` and no `max_tokens` (owner decision: model defaults, never
+  cap the answer; with reasoning enabled the thinking budget then derives from
+  the provider's default output cap — the 180 s total budget and the read
+  timeout are the guardrails, and `none` remains the fast path),
   `provider: {"sort": "throughput"}` (default routing optimizes price, often the
   slowest provider), `usage: {"include": true}` (logs completion/reasoning token
   counts), and `reasoning`: `{"enabled": false}` for `none` (default) or
