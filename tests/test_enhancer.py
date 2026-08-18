@@ -156,14 +156,17 @@ def test_cache_prune_keeps_newest(tmp_path):
 # ---- enhance (HTTP loop) ------------------------------------------------
 
 class FakeResp:
-    def __init__(self, status, content=None, text="", headers=None):
+    def __init__(self, status, content=None, text="", headers=None, extra=None):
         self.status_code = status
         self._content = content
+        self._extra = extra or {}
         self.text = text or (content or "")
         self.headers = headers or {}
 
     def json(self):
-        return {"choices": [{"message": {"content": self._content}}]}
+        data = {"choices": [{"message": {"content": self._content}}]}
+        data.update(self._extra)
+        return data
 
 
 def call(post, **kw):
@@ -376,3 +379,125 @@ def test_enhance_sends_vision_parts():
     assert isinstance(user["content"], list)
     assert user["content"][0]["type"] == "text"
     assert user["content"][-1] == parts[0]
+
+
+# ---- build_user_messages (vision_format) --------------------------------
+
+IMG = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,x"}}
+VID = {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,y"}}
+
+
+def test_build_user_messages_plain_string_without_parts():
+    msgs = enhancer.build_user_messages("draft")
+    assert msgs == [{"role": "user", "content": "draft"}]
+
+
+def test_build_user_messages_default_orders_context_text_vision():
+    ctx = [{"type": "text", "text": "footage:"}, VID]
+    vis = [{"type": "text", "text": "@a (image):"}, IMG]
+    msgs = enhancer.build_user_messages("draft", context_parts=ctx,
+                                        vision_parts=vis)
+    assert len(msgs) == 1
+    content = msgs[0]["content"]
+    assert content[0]["text"] == "footage:"
+    assert content[1] == VID
+    assert content[2] == {"type": "text", "text": "draft"}
+    assert content[3]["text"] == "@a (image):"
+    assert content[4] == IMG
+
+
+def test_build_user_messages_cascade_one_message_per_media():
+    ctx = [{"type": "text", "text": "footage:"}, VID]
+    vis = [{"type": "text", "text": "@a (image):"}, IMG,
+           {"type": "text", "text": "@b (image):"}, IMG]
+    msgs = enhancer.build_user_messages("draft", context_parts=ctx,
+                                        vision_parts=vis,
+                                        vision_format="cascade")
+    assert len(msgs) == 4
+    assert msgs[0]["content"] == ctx
+    assert msgs[1]["content"] == vis[0:2]
+    assert msgs[2]["content"] == vis[2:4]
+    assert msgs[3] == {"role": "user", "content": "draft"}
+
+
+def test_build_user_messages_cascade_without_media_is_plain():
+    msgs = enhancer.build_user_messages("draft", vision_format="cascade")
+    assert msgs == [{"role": "user", "content": "draft"}]
+
+
+# ---- video guards in enhance() ------------------------------------------
+
+def test_enhance_video_rejection_fails_with_guidance():
+    calls = []
+
+    def post(url, headers=None, json=None, timeout=None):
+        calls.append(json)
+        return FakeResp(404, text='{"error": {"message": "No endpoints found '
+                                  'that support input video"}}')
+
+    ctx = [{"type": "text", "text": "footage:"}, VID]
+    with pytest.raises(EnhancerError) as e:
+        call(post, context_parts=ctx, video_sent=True)
+    assert "image_last_frame" in str(e.value)
+    assert "input_modalities=video" in str(e.value)
+    assert len(calls) == 1  # instant rejection, no retries
+
+
+def test_enhance_plain_404_without_video_keeps_generic_error():
+    def post(url, headers=None, json=None, timeout=None):
+        return FakeResp(404, text="not found")
+
+    with pytest.raises(EnhancerError) as e:
+        call(post)
+    assert "HTTP 404" in str(e.value)
+
+
+def test_enhance_silent_video_drop_is_an_error():
+    def post(url, headers=None, json=None, timeout=None):
+        return FakeResp(200, '{"prompt_final": "ok"}',
+                        extra={"provider": "Google AI Studio",
+                               "usage": {"prompt_tokens_details":
+                                         {"video_tokens": 0}}})
+
+    ctx = [{"type": "text", "text": "footage:"}, VID]
+    with pytest.raises(EnhancerError) as e:
+        call(post, context_parts=ctx, video_sent=True)
+    assert "dropped the video" in str(e.value)
+
+
+def test_enhance_video_tokens_billed_is_fine():
+    def post(url, headers=None, json=None, timeout=None):
+        return FakeResp(200, '{"prompt_final": "ok"}',
+                        extra={"provider": "Google",
+                               "usage": {"prompt_tokens_details":
+                                         {"video_tokens": 2580}}})
+
+    ctx = [{"type": "text", "text": "footage:"}, VID]
+    assert call(post, context_parts=ctx, video_sent=True) == "ok"
+
+
+def test_enhance_cascade_sends_separate_user_messages():
+    bodies = []
+
+    def post(url, headers=None, json=None, timeout=None):
+        bodies.append(json)
+        return FakeResp(200, '{"prompt_final": "ok"}')
+
+    vis = [{"type": "text", "text": "@a (image):"}, IMG]
+    call(post, vision_parts=vis, vision_format="cascade")
+    messages = bodies[0]["messages"]
+    assert messages[0]["role"] == "system"
+    assert messages[1]["content"] == vis
+    assert isinstance(messages[2]["content"], str)
+
+
+# ---- cache_key new fields -----------------------------------------------
+
+def test_cache_key_sensitive_to_continue_fields():
+    base = dict(prompt="p", ref_stats=[], model="m", system="s",
+                vision=False, seed=0)
+    k0 = enhancer.cache_key(**base)
+    assert enhancer.cache_key(**base, duration_mode="total") != k0
+    assert enhancer.cache_key(**base, vision_format="cascade") != k0
+    assert enhancer.cache_key(**base, context_sha="abc") != k0
+    assert enhancer.cache_key(**base) == k0

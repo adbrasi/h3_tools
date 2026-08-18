@@ -15,7 +15,7 @@ import os
 import re
 import time
 
-from . import refs
+from . import continuation, refs
 from .system_prompts import DEFAULT_SYSTEM_PROMPT, SYSTEM_PROMPTS  # noqa: F401
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -111,12 +111,16 @@ def sanitize_output(text, refs_list, original_prompt):
 
 
 def cache_key(prompt, ref_stats, model, system, vision, seed, duration=None,
-              reasoning=None):
-    # duration and reasoning are part of the LLM's input/behavior, so they are
-    # part of the key; width/height stay out on purpose
+              reasoning=None, duration_mode=None, vision_format=None,
+              context_sha=None):
+    # duration, reasoning, duration_mode, vision_format and the continuation
+    # payload hash are part of the LLM's input/behavior, so they are part of
+    # the key; width/height stay out on purpose
     payload = {"prompt": prompt, "refs": ref_stats, "model": model,
                "system": system, "vision": bool(vision), "seed": seed,
-               "duration": duration, "reasoning": reasoning}
+               "duration": duration, "reasoning": reasoning,
+               "duration_mode": duration_mode, "vision_format": vision_format,
+               "context_sha": context_sha}
     blob = json.dumps(payload, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
@@ -147,8 +151,34 @@ def cache_put(cache_dir, key, prompt_final, model, max_entries=CACHE_MAX_ENTRIES
         pass  # pruning is best-effort; a failed prune must not kill the job
 
 
+def build_user_messages(user_text, *, context_parts=None, vision_parts=None,
+                        vision_format="default"):
+    """User message list per vision_format (SPEC §12.6).
+
+    Both part lists are flat (text label, media part) pairs. `default` sends
+    one message: continuation context first, then the main text, then the
+    reference parts (the Pro node's historical shape). `cascade` sends one
+    message per media pair, then the main text as its own message.
+    """
+    context_parts = list(context_parts or [])
+    vision_parts = list(vision_parts or [])
+    if not context_parts and not vision_parts:
+        return [{"role": "user", "content": user_text}]
+    if vision_format == "cascade":
+        messages = []
+        for parts in (context_parts, vision_parts):
+            for i in range(0, len(parts), 2):
+                messages.append({"role": "user", "content": parts[i:i + 2]})
+        messages.append({"role": "user", "content": user_text})
+        return messages
+    content = (context_parts + [{"type": "text", "text": user_text}]
+               + vision_parts)
+    return [{"role": "user", "content": content}]
+
+
 def enhance(prompt, *, api_key, model, system_prompt, manifest,
-            target_duration=None, vision_parts=None, reasoning_effort="none",
+            target_duration=None, vision_parts=None, context_parts=None,
+            vision_format="default", video_sent=False, reasoning_effort="none",
             timeout=60, deadline=None, post=None, sleep=None):
     """Call OpenRouter and return prompt_final. 3 total attempts:
     network / 429 / 5xx retry with a short Retry-After-aware backoff; a parse
@@ -193,14 +223,13 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
         system_text = system_prompt
         if nudged:
             system_text += "\nReturn ONLY the JSON object, nothing else."
-        if vision_parts:
-            user_content = [{"type": "text", "text": user_text}] + list(vision_parts)
-        else:
-            user_content = user_text
         body = {
             "model": model,
-            "messages": [{"role": "system", "content": system_text},
-                         {"role": "user", "content": user_content}],
+            "messages": ([{"role": "system", "content": system_text}]
+                         + build_user_messages(user_text,
+                                               context_parts=context_parts,
+                                               vision_parts=vision_parts,
+                                               vision_format=vision_format)),
             "response_format": {"type": "json_object"},
             # no temperature and no max_tokens (owner decision): model defaults
             # apply. NB: with reasoning enabled, the thinking budget then derives
@@ -237,6 +266,13 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
             backoff(attempt, last_error, resp)
             continue
         if status != 200:
+            if video_sent and continuation.is_video_rejection(
+                    status, getattr(resp, "text", "")):
+                raise EnhancerError(
+                    "model %s does not accept video input (OpenRouter: no "
+                    "endpoints support input video). Pick a video-capable "
+                    "model — see openrouter.ai/models?input_modalities=video "
+                    "— or connect image_last_frame instead of video." % model)
             # mandatory-reasoning models reject disabling it; retry without
             # the field so the provider default applies
             if (status == 400 and "reasoning" in body
@@ -255,6 +291,12 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
             last_error = "malformed OpenRouter response body: %s" % _excerpt(resp, api_key)
             backoff(attempt, last_error, resp)
             continue
+        if video_sent and continuation.is_silent_video_drop(data):
+            raise EnhancerError(
+                "provider %s silently dropped the video part (video_tokens=0);"
+                " refusing an answer that never saw the footage — try another "
+                "model or connect image_last_frame"
+                % (data.get("provider") or "unknown"))
         usage = data.get("usage") or {}
         details = usage.get("completion_tokens_details") or {}
         logging.info("h3_tools: enhancer call ok in %.1fs (completion=%s tokens, "
