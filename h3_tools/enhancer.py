@@ -20,6 +20,9 @@ from .system_prompts import DEFAULT_SYSTEM_PROMPT, SYSTEM_PROMPTS  # noqa: F401
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 CACHE_MAX_ENTRIES = 500
+# a syntactically valid {"prompt_final": ".}"} from a reasoning model that
+# burned its budget is still garbage; any real rewrite is far longer
+MIN_RESULT_CHARS = 40
 
 
 
@@ -402,8 +405,14 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
         logging.info("h3_tools: enhancer call ok in %.1fs (completion=%s tokens, "
                      "reasoning=%s)", time.monotonic() - attempt_started,
                      usage.get("completion_tokens"), details.get("reasoning_tokens"))
+        if (reasoning_effort == "none" and not reasoning_stripped
+                and details.get("reasoning_tokens")):
+            logging.warning("h3_tools: model %s ignored disabled reasoning (%s "
+                            "reasoning tokens were generated and billed) — "
+                            "consider a non-reasoning model for the enhancer",
+                            model, details.get("reasoning_tokens"))
         try:
-            return parse_response(content)
+            value = parse_response(content)
         except EnhancerError as e:
             last_error = str(e)
             if attempt < 2:
@@ -412,6 +421,15 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
                                 attempt + 1, last_error)
             nudged = True
             continue
+        if len(value) < MIN_RESULT_CHARS:
+            last_error = ('enhancer answered with a %d-char "prompt_final" — '
+                          "too short to be a real prompt" % len(value))
+            if attempt < 2:
+                logging.warning("h3_tools: enhancer attempt %d/3 %s; retrying",
+                                attempt + 1, last_error)
+            nudged = True
+            continue
+        return value
     raise EnhancerError("prompt enhancer failed after 3 attempts: %s" % last_error)
 
 

@@ -155,6 +155,10 @@ def test_cache_prune_keeps_newest(tmp_path):
 
 # ---- enhance (HTTP loop) ------------------------------------------------
 
+OK = "a plausible rewritten prompt, long enough to pass the substance check"
+OK_JSON = '{"prompt_final": "%s"}' % OK
+
+
 class FakeResp:
     def __init__(self, status, content=None, text="", headers=None, extra=None):
         self.status_code = status
@@ -184,9 +188,9 @@ def test_enhance_success_first_try():
     def post(url, headers=None, json=None, timeout=None):
         bodies.append(json)
         timeouts.append(timeout)
-        return FakeResp(200, '{"prompt_final": "rich"}')
+        return FakeResp(200, OK_JSON)
 
-    assert call(post) == "rich"
+    assert call(post) == OK
     assert bodies[0]["response_format"] == {"type": "json_object"}
     assert "temperature" not in bodies[0]  # model default; reasoning models reject it
     assert "max_tokens" not in bodies[0]  # owner decision: never cap the answer
@@ -199,8 +203,8 @@ def test_enhance_success_first_try():
 
 def test_enhance_retries_5xx_then_succeeds():
     seq = [FakeResp(500, text="err"), FakeResp(502, text="err"),
-           FakeResp(200, '{"prompt_final": "ok"}')]
-    assert call(lambda *a, **k: seq.pop(0)) == "ok"
+           FakeResp(200, OK_JSON)]
+    assert call(lambda *a, **k: seq.pop(0)) == OK
 
 
 def test_enhance_three_5xx_fails_with_excerpt():
@@ -211,8 +215,8 @@ def test_enhance_three_5xx_fails_with_excerpt():
 def test_enhance_backoff_honors_retry_after():
     sleeps = []
     seq = [FakeResp(429, text="slow down", headers={"Retry-After": "3"}),
-           FakeResp(200, '{"prompt_final": "ok"}')]
-    assert call(lambda *a, **k: seq.pop(0), sleep=sleeps.append) == "ok"
+           FakeResp(200, OK_JSON)]
+    assert call(lambda *a, **k: seq.pop(0), sleep=sleeps.append) == OK
     assert sleeps == [3.0]
 
 
@@ -233,9 +237,9 @@ def test_enhance_timeout_fails_fast():
 
 
 def test_enhance_logs_each_retry(caplog):
-    seq = [FakeResp(500, text="err-500"), FakeResp(200, '{"prompt_final": "ok"}')]
+    seq = [FakeResp(500, text="err-500"), FakeResp(200, OK_JSON)]
     with caplog.at_level(logging.WARNING):
-        assert call(lambda *a, **k: seq.pop(0)) == "ok"
+        assert call(lambda *a, **k: seq.pop(0)) == OK
     assert any("attempt 1/3" in r.message and "retrying" in r.message
                for r in caplog.records)
 
@@ -247,13 +251,13 @@ def test_enhance_with_fallback_uses_second_model():
         calls.append(json["model"])
         if json["model"] == "bad/one":
             return FakeResp(400, text="no such model")
-        return FakeResp(200, '{"prompt_final": "ok"}')
+        return FakeResp(200, OK_JSON)
 
     used, out = enhancer.enhance_with_fallback(
         "@garota dança", models=["bad/one", "good/two"], api_key="k",
         system_prompt="SYS", manifest="- @garota (image)", vision_parts=None,
         post=post, sleep=lambda s: None)
-    assert (used, out) == ("good/two", "ok")
+    assert (used, out) == ("good/two", OK)
     assert calls == ["bad/one", "good/two"]
 
 
@@ -288,13 +292,13 @@ def test_enhance_401_fails_immediately():
 
 def test_enhance_parse_failure_retries_with_nudge():
     bodies = []
-    seq = [FakeResp(200, "not json"), FakeResp(200, '{"prompt_final": "ok"}')]
+    seq = [FakeResp(200, "not json"), FakeResp(200, OK_JSON)]
 
     def post(url, headers=None, json=None, timeout=None):
         bodies.append(json)
         return FakeResp(*[]) if False else seq.pop(0)
 
-    assert call(post) == "ok"
+    assert call(post) == OK
     assert "Return ONLY the JSON object" not in bodies[0]["messages"][0]["content"]
     assert "Return ONLY the JSON object" in bodies[1]["messages"][0]["content"]
 
@@ -313,7 +317,7 @@ def test_enhance_sends_chosen_reasoning_effort():
 
     def post(url, headers=None, json=None, timeout=None):
         bodies.append(json)
-        return FakeResp(200, '{"prompt_final": "ok"}')
+        return FakeResp(200, OK_JSON)
 
     call(post, reasoning_effort="xhigh")
     assert bodies[0]["reasoning"] == {"effort": "xhigh"}
@@ -322,13 +326,13 @@ def test_enhance_sends_chosen_reasoning_effort():
 def test_enhance_strips_rejected_reasoning_field():
     bodies = []
     seq = [FakeResp(400, text='{"error": "reasoning is not supported"}'),
-           FakeResp(200, '{"prompt_final": "ok"}')]
+           FakeResp(200, OK_JSON)]
 
     def post(url, headers=None, json=None, timeout=None):
         bodies.append(json)
         return seq.pop(0)
 
-    assert call(post) == "ok"
+    assert call(post) == OK
     assert "reasoning" in bodies[0]
     assert "reasoning" not in bodies[1]
 
@@ -359,7 +363,7 @@ def test_enhance_sends_target_duration():
 
     def post(url, headers=None, json=None, timeout=None):
         bodies.append(json)
-        return FakeResp(200, '{"prompt_final": "ok"}')
+        return FakeResp(200, OK_JSON)
 
     call(post, target_duration=5.2)
     user = bodies[0]["messages"][1]["content"]
@@ -371,7 +375,7 @@ def test_enhance_sends_vision_parts():
 
     def post(url, headers=None, json=None, timeout=None):
         bodies.append(json)
-        return FakeResp(200, '{"prompt_final": "ok"}')
+        return FakeResp(200, OK_JSON)
 
     parts = [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,x"}}]
     call(post, vision_parts=parts)
@@ -454,7 +458,7 @@ def test_enhance_plain_404_without_video_keeps_generic_error():
 
 def test_enhance_silent_video_drop_is_an_error():
     def post(url, headers=None, json=None, timeout=None):
-        return FakeResp(200, '{"prompt_final": "ok"}',
+        return FakeResp(200, OK_JSON,
                         extra={"provider": "Google AI Studio",
                                "usage": {"prompt_tokens_details":
                                          {"video_tokens": 0}}})
@@ -467,13 +471,13 @@ def test_enhance_silent_video_drop_is_an_error():
 
 def test_enhance_video_tokens_billed_is_fine():
     def post(url, headers=None, json=None, timeout=None):
-        return FakeResp(200, '{"prompt_final": "ok"}',
+        return FakeResp(200, OK_JSON,
                         extra={"provider": "Google",
                                "usage": {"prompt_tokens_details":
                                          {"video_tokens": 2580}}})
 
     ctx = [{"type": "text", "text": "footage:"}, VID]
-    assert call(post, context_parts=ctx, video_sent=True) == "ok"
+    assert call(post, context_parts=ctx, video_sent=True) == OK
 
 
 def test_enhance_cascade_sends_separate_user_messages():
@@ -481,7 +485,7 @@ def test_enhance_cascade_sends_separate_user_messages():
 
     def post(url, headers=None, json=None, timeout=None):
         bodies.append(json)
-        return FakeResp(200, '{"prompt_final": "ok"}')
+        return FakeResp(200, OK_JSON)
 
     vis = [{"type": "text", "text": "@a (image):"}, IMG]
     call(post, vision_parts=vis, vision_format="cascade")
@@ -565,9 +569,9 @@ class FakeStreamResp:
 def test_enhance_streams_and_assembles_content():
     bodies = []
     lines = [
-        sse({"choices": [{"delta": {"content": '{"prompt_final": '}}]}),
+        sse({"choices": [{"delta": {"content": '{"prompt_final": "'}}]}),
         ": keep-alive comment",
-        sse({"choices": [{"delta": {"content": '"streamed"}'}}]}),
+        sse({"choices": [{"delta": {"content": OK + '"}'}}]}),
         sse({"provider": "Google", "usage": {"completion_tokens": 7}}),
         "data: [DONE]",
     ]
@@ -576,14 +580,14 @@ def test_enhance_streams_and_assembles_content():
         bodies.append(json)
         return FakeStreamResp(lines)
 
-    assert call(post) == "streamed"
+    assert call(post) == OK
     assert bodies[0]["stream"] is True
 
 
 def test_enhance_stream_error_chunk_retries():
     seq = [FakeStreamResp([sse({"error": {"message": "provider blew up"}})]),
-           FakeResp(200, '{"prompt_final": "ok"}')]
-    assert call(lambda *a, **k: seq.pop(0)) == "ok"
+           FakeResp(200, OK_JSON)]
+    assert call(lambda *a, **k: seq.pop(0)) == OK
 
 
 def test_enhance_stream_silent_video_drop_guard():
@@ -597,3 +601,40 @@ def test_enhance_stream_silent_video_drop_guard():
     with pytest.raises(EnhancerError, match="dropped the video"):
         call(lambda *a, **k: FakeStreamResp(lines),
              context_parts=ctx, video_sent=True)
+
+
+# ---- substance check ----------------------------------------------------
+
+def test_enhance_tiny_answer_retries_then_fallback():
+    # a reasoning model burning its budget can emit a valid-but-empty answer
+    # like {"prompt_final": ".}"}; that must never reach the encoder
+    seq = [FakeResp(200, '{"prompt_final": ".}"}'),
+           FakeResp(200, '{"prompt_final": ".}"}'),
+           FakeResp(200, '{"prompt_final": ".}"}'),
+           FakeResp(200, OK_JSON)]
+
+    def post(url, headers=None, json=None, timeout=None):
+        return seq.pop(0)
+
+    used, out = enhancer.enhance_with_fallback(
+        "@garota dança", models=["bad/reasoner", "good/model"],
+        api_key="sk-secret-123", system_prompt="SYS", manifest="- @garota",
+        post=post, sleep=lambda s: None)
+    assert (used, out) == ("good/model", OK)
+
+
+def test_enhance_tiny_answer_alone_fails_clearly():
+    with pytest.raises(EnhancerError, match="too short"):
+        call(lambda *a, **k: FakeResp(200, '{"prompt_final": ".}"}'))
+
+
+def test_enhance_warns_when_disabled_reasoning_is_ignored(caplog):
+    def post(url, headers=None, json=None, timeout=None):
+        return FakeResp(200, OK_JSON,
+                        extra={"usage": {"completion_tokens": 4462,
+                                         "completion_tokens_details":
+                                         {"reasoning_tokens": 4454}}})
+
+    with caplog.at_level(logging.WARNING):
+        assert call(post) == OK
+    assert any("ignored disabled reasoning" in r.message for r in caplog.records)
