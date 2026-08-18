@@ -44,6 +44,11 @@ Hard rules:
 Output: respond with ONLY this JSON object, no markdown fences, no commentary:
 {"prompt_final": "<the rewritten prompt>"}"""
 
+# preset name -> system prompt; the node's combo widget is built from the keys
+SYSTEM_PROMPTS = {
+    "default": DEFAULT_SYSTEM_PROMPT,
+}
+
 
 class EnhancerError(RuntimeError):
     """User-facing enhancer failure; the message is shown as-is."""
@@ -127,9 +132,12 @@ def sanitize_output(text, refs_list, original_prompt):
     return clean, warnings
 
 
-def cache_key(prompt, ref_stats, model, system, vision, seed):
+def cache_key(prompt, ref_stats, model, system, vision, seed, duration=None):
+    # duration is part of the LLM's input (timestamps must fit it), so it must
+    # be part of the key; width/height stay out on purpose
     payload = {"prompt": prompt, "refs": ref_stats, "model": model,
-               "system": system, "vision": bool(vision), "seed": seed}
+               "system": system, "vision": bool(vision), "seed": seed,
+               "duration": duration}
     blob = json.dumps(payload, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
@@ -161,7 +169,8 @@ def cache_put(cache_dir, key, prompt_final, model, max_entries=CACHE_MAX_ENTRIES
 
 
 def enhance(prompt, *, api_key, model, system_prompt, manifest,
-            vision_parts=None, timeout=120, post=None, sleep=None):
+            target_duration=None, vision_parts=None, timeout=120,
+            post=None, sleep=None):
     """Call OpenRouter and return prompt_final. 3 total attempts:
     network / 429 / 5xx retry with a short Retry-After-aware backoff; a parse
     failure retries with a "JSON only" nudge (kept for later attempts); other
@@ -185,6 +194,9 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
         sleep(delay)
 
     user_text = "Draft prompt:\n%s\n\nReferences:\n%s" % (prompt, manifest)
+    if target_duration:
+        user_text = ("Target video duration: %.1f seconds (24 fps).\n\n"
+                     % target_duration) + user_text
     nudged = False
     last_error = "no attempts made"
     for attempt in range(3):

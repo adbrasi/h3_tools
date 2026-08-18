@@ -10,10 +10,11 @@ import json
 import logging
 import os
 
+import comfy.utils
 import folder_paths
 import nodes
+from comfy_extras.nodes_minimax_h3 import MiniMaxH3ReferenceToVideo, align_frame_count
 from comfy_api.latest import io
-from comfy_extras.nodes_minimax_h3 import MiniMaxH3ReferenceToVideo
 
 from . import enhancer, media, refs
 
@@ -69,8 +70,12 @@ class H3RefToVideoPro(io.ComfyNode):
                             "serverless hosts."),
                 io.Boolean.Input("enhancer_vision", default=False,
                     tooltip="Send reference images (and one frame per video) to the LLM."),
-                io.String.Input("system_prompt_override", multiline=True, default="",
-                    tooltip="Non-empty replaces the built-in enhancer system prompt verbatim."),
+                io.Combo.Input("system_prompt_preset",
+                    options=list(enhancer.SYSTEM_PROMPTS.keys()), default="default",
+                    tooltip="Built-in enhancer system prompt: what kind of video the "
+                            "LLM should write for (multishot, single take, ...)."),
+                io.String.Input("system_prompt_override", optional=True, force_input=True,
+                    tooltip="Connect a STRING to replace the preset verbatim."),
                 io.Int.Input("enhancer_seed", default=0, min=0, max=2**31 - 1,
                     tooltip="Part of the enhancer cache key only — bump to re-roll the LLM."),
             ],
@@ -133,16 +138,21 @@ class H3RefToVideoPro(io.ComfyNode):
     @classmethod
     def execute(cls, clip, vae, audio_vae, prompt, references, width, height, length,
                 ref_image_size, enhance_prompt, enhancer_model, openrouter_api_key,
-                enhancer_vision, system_prompt_override, enhancer_seed) -> io.NodeOutput:
+                enhancer_vision, system_prompt_preset, enhancer_seed,
+                system_prompt_override=None) -> io.NodeOutput:
         ref_list = refs.parse_references(references)
         unknown = refs.unknown_mentions(prompt, ref_list)
         if unknown:
             raise ValueError(_unknown_mentions_message(unknown, ref_list))
 
+        # progress: one tick per decoded ref (+ enhancer) + the native encode
+        pbar = comfy.utils.ProgressBar(len(ref_list) + (1 if enhance_prompt else 0) + 1)
+
         # decode every reference in array order via the native loader nodes
         payloads = {}
         durations = {}
         for r in ref_list:
+            logging.info("h3_tools: decoding @%s (%s: %s)", r.name, r.type, r.file)
             if r.type == "image":
                 payloads[r.name] = media.load_image_ref(r.file)
             elif r.type == "video":
@@ -157,13 +167,21 @@ class H3RefToVideoPro(io.ComfyNode):
                 payload = media.load_audio_ref(r.file)
                 payloads[r.name] = payload
                 durations[r.name] = payload["duration"]
+            pbar.update(1)
+
+        # the generation's real duration (after the 17k+5 frame snap) — the
+        # enhancer needs it to place shots/beats at exact timestamps
+        target_duration = align_frame_count(max(5, length)) / 24.0
 
         working_prompt = prompt
         if enhance_prompt:
+            logging.info("h3_tools: enhancing prompt via OpenRouter (%s, preset %s)",
+                         enhancer_model, system_prompt_preset)
             working_prompt = cls._enhance(
                 prompt, ref_list, payloads, durations, enhancer_model,
-                openrouter_api_key, enhancer_vision, system_prompt_override,
-                enhancer_seed)
+                openrouter_api_key, enhancer_vision, system_prompt_preset,
+                system_prompt_override, enhancer_seed, target_duration)
+            pbar.update(1)
 
         final_prompt = refs.build_final_prompt(working_prompt, ref_list)
         unmentioned = refs.unmentioned_refs(working_prompt, ref_list)
@@ -185,6 +203,8 @@ class H3RefToVideoPro(io.ComfyNode):
             else:
                 groups[group][key] = payload["audio"]
 
+        logging.info("h3_tools: encoding via native MiniMaxH3ReferenceToVideo "
+                     "(%d refs, %.1fs target)", len(ref_list), target_duration)
         out = MiniMaxH3ReferenceToVideo.execute(
             clip=clip, vae=vae, audio_vae=audio_vae, prompt=final_prompt,
             width=width, height=height, length=length, ref_image_size=ref_image_size,
@@ -193,19 +213,22 @@ class H3RefToVideoPro(io.ComfyNode):
             ref_video_audios=groups["ref_video_audios"] or None,
             ref_audios=groups["ref_audios"] or None)
         cond, latent = out.args
+        pbar.update(1)
         return io.NodeOutput(cond, latent, final_prompt)
 
     @classmethod
     def _enhance(cls, prompt, ref_list, payloads, durations, model, api_key_widget,
-                 vision, system_override, seed):
+                 vision, preset, system_override, seed, target_duration):
         api_key = api_key_widget or os.environ.get("OPENROUTER_API_KEY", "")
         if not api_key:
             raise ValueError(
                 "enhance_prompt is on but no OpenRouter key was found: fill the "
                 "openrouter_api_key widget or set the OPENROUTER_API_KEY "
                 "environment variable")
-        system_prompt = system_override if system_override.strip() \
-            else enhancer.DEFAULT_SYSTEM_PROMPT
+        if system_override and system_override.strip():
+            system_prompt = system_override
+        else:
+            system_prompt = enhancer.SYSTEM_PROMPTS[preset]
 
         ref_stats = []
         for r in ref_list:
@@ -219,7 +242,8 @@ class H3RefToVideoPro(io.ComfyNode):
             ref_stats.append({"name": r.name, "type": r.type, "file": r.file,
                               "use_soundtrack": r.use_soundtrack,
                               "mtime_ns": mtime_ns, "size": size})
-        key = enhancer.cache_key(prompt, ref_stats, model, system_prompt, vision, seed)
+        key = enhancer.cache_key(prompt, ref_stats, model, system_prompt, vision,
+                                 seed, duration=target_duration)
         cache_dir = os.path.join(folder_paths.get_user_directory(),
                                  "h3_tools", "enhancer_cache")
         cached = enhancer.cache_get(cache_dir, key)
@@ -244,6 +268,7 @@ class H3RefToVideoPro(io.ComfyNode):
         manifest = enhancer.build_manifest(ref_list, durations)
         result = enhancer.enhance(prompt, api_key=api_key, model=model,
                                   system_prompt=system_prompt, manifest=manifest,
+                                  target_duration=target_duration,
                                   vision_parts=vision_parts)
         clean, warnings = enhancer.sanitize_output(result, ref_list, prompt)
         for warning in warnings:

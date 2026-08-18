@@ -117,6 +117,7 @@ def test_cache_key_sensitive_to_every_field():
     assert enhancer.cache_key("p", stats, "m", "s", True, 0) != base
     changed = [dict(stats[0], use_soundtrack=True)]
     assert enhancer.cache_key("p", changed, "m", "s", False, 0) != base
+    assert enhancer.cache_key("p", stats, "m", "s", False, 0, duration=5.2) != base
 
 
 def test_cache_roundtrip(tmp_path):
@@ -239,6 +240,18 @@ def test_enhance_network_error_never_leaks_key():
     with pytest.raises(EnhancerError) as exc:
         call(post)
     assert "sk-secret-123" not in str(exc.value)
+
+
+def test_enhance_sends_target_duration():
+    bodies = []
+
+    def post(url, headers=None, json=None, timeout=None):
+        bodies.append(json)
+        return FakeResp(200, '{"prompt_final": "ok"}')
+
+    call(post, target_duration=5.2)
+    user = bodies[0]["messages"][1]["content"]
+    assert user.startswith("Target video duration: 5.2 seconds")
 
 
 def test_enhance_sends_vision_parts():
