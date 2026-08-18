@@ -103,8 +103,11 @@ latency); they retry
 `enhancer_model_fallback` to try a second model when the main one fails for
 good (timeout, provider error, unparseable output). The LLM receives the draft
 + a reference manifest (+ downscaled images when `enhancer_vision` is on),
-must answer `{"prompt_final": "..."}`, and its output is sanitized: invented
-`@tokens` are stripped with a warning; a dropped `@name` only logs a warning.
+must answer `{"prompt_final": "..."}`, and its output is sanitized: the six
+H3 sections are restored to the official order when the LLM shuffles them;
+invented `@tokens` are stripped with a warning; a dropped `@name` only logs a
+warning. Responses stream over SSE and are logged live in the console
+(`h3_tools: enhancer ▸ ...`) while they arrive.
 Results are cached on disk (`user/h3_tools/enhancer_cache/`) keyed by
 prompt/refs/model/system/vision/seed/duration — bump `enhancer_seed` to
 re-roll. Failures after 3 attempts are hard errors, never silent fallbacks.

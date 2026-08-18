@@ -91,13 +91,45 @@ def build_manifest(refs_list, durations=None):
     return "\n".join(lines)
 
 
+_SECTION_ORDER = ["subject_definitions", "summary", "retention_analysis",
+                  "detailed_description", "overall_soundscape",
+                  "non_diegetic_music"]
+_SECTION_RE = re.compile(r"(?m)^(%s):[ \t]*$" % "|".join(_SECTION_ORDER))
+
+
+def reorder_sections(text):
+    """Re-emit the six H3 sections in the official order — LLMs sometimes
+    shuffle them (e.g. detailed_description last). Text that doesn't parse as
+    labeled sections, or with a duplicated label, returns unchanged."""
+    matches = list(_SECTION_RE.finditer(text))
+    labels = [m.group(1) for m in matches]
+    if len(matches) < 2 or len(set(labels)) != len(labels):
+        return text
+    expected = [l for l in _SECTION_ORDER if l in labels]
+    if labels == expected:
+        return text
+    blocks = {}
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        blocks[m.group(1)] = text[m.start():end].strip()
+    head = text[:matches[0].start()].strip()
+    return "\n".join(([head] if head else []) + [blocks[l] for l in expected])
+
+
 def sanitize_output(text, refs_list, original_prompt):
-    """Sanitation (SPEC §5.4): repair near-miss @tokens (LLM typos), strip the
-    rest, warn on drops — user mistakes fail earlier, LLM mistakes never kill
-    the job."""
+    """Sanitation (SPEC §5.4): restore section order, repair near-miss @tokens
+    (LLM typos), strip the rest, warn on drops — user mistakes fail earlier,
+    LLM mistakes never kill the job."""
+    reordered = reorder_sections(text)
+    order_warnings = []
+    if reordered != text:
+        order_warnings.append("enhancer output listed the six sections out of "
+                              "order; restored the official order")
+        text = reordered
     clean, repairs = refs.repair_mentions(text, refs_list)
-    warnings = ['enhancer output misspelled %s; corrected to "@%s"' % (typed, fixed)
-                for typed, fixed in dict.fromkeys(repairs)]
+    warnings = order_warnings
+    warnings += ['enhancer output misspelled %s; corrected to "@%s"' % (typed, fixed)
+                 for typed, fixed in dict.fromkeys(repairs)]
     clean, removed = refs.strip_unknown_mentions(clean, refs_list)
     warnings += ["enhancer output mentioned unknown reference %s; stripped" % tok
                  for tok in dict.fromkeys(removed)]
@@ -151,6 +183,54 @@ def cache_put(cache_dir, key, prompt_final, model, max_entries=CACHE_MAX_ENTRIES
         pass  # pruning is best-effort; a failed prune must not kill the job
 
 
+def _drain_stream(resp, log_every=1.5, clock=None):
+    """Accumulate an OpenRouter SSE stream, logging the text as it arrives so
+    the console shows the answer being written live.
+
+    Returns (content, meta) where meta carries provider/usage (from the final
+    chunk) and, on a mid-stream failure, meta["error"] — the caller treats
+    that like any other retryable provider error.
+    """
+    if clock is None:
+        clock = time.monotonic
+    content, pending, meta = [], [], {}
+    last_flush = clock()
+
+    def flush():
+        if pending:
+            logging.info("h3_tools: enhancer ▸ %s", "".join(pending).strip())
+            del pending[:]
+
+    for raw in resp.iter_lines(decode_unicode=True):
+        if not raw or not raw.startswith("data:"):
+            continue
+        payload = raw[5:].strip()
+        if payload == "[DONE]":
+            break
+        try:
+            chunk = json.loads(payload)
+        except ValueError:
+            continue
+        if not isinstance(chunk, dict):
+            continue
+        if chunk.get("error"):
+            meta["error"] = chunk["error"]
+            break
+        for key in ("provider", "usage"):
+            if chunk.get(key):
+                meta[key] = chunk[key]
+        for choice in chunk.get("choices") or []:
+            delta = (choice.get("delta") or {}).get("content")
+            if delta:
+                content.append(delta)
+                pending.append(delta)
+        if clock() - last_flush >= log_every:
+            flush()
+            last_flush = clock()
+    flush()
+    return "".join(content), meta
+
+
 def build_user_messages(user_text, *, context_parts=None, vision_parts=None,
                         vision_format="default"):
     """User message list per vision_format (SPEC §12.6).
@@ -190,8 +270,12 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
     Never falls back silently to the raw prompt.
     """
     if post is None:
+        import functools
+
         import requests
-        post = requests.post
+        # stream=True keeps requests from buffering the SSE body, so the
+        # tokens can be logged live as they arrive
+        post = functools.partial(requests.post, stream=True)
     if sleep is None:
         sleep = time.sleep
 
@@ -231,6 +315,9 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
                                                vision_parts=vision_parts,
                                                vision_format=vision_format)),
             "response_format": {"type": "json_object"},
+            # SSE so the answer can be logged live; injected test doubles that
+            # answer plain JSON take the non-stream branch below
+            "stream": True,
             # no temperature and no max_tokens (owner decision): model defaults
             # apply. NB: with reasoning enabled, the thinking budget then derives
             # from the provider's default output cap — the 180s total budget and
@@ -284,13 +371,26 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
                 continue
             raise EnhancerError("OpenRouter request failed (HTTP %d): %s"
                                 % (status, _excerpt(resp, api_key)))
-        try:
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"]
-        except Exception:
-            last_error = "malformed OpenRouter response body: %s" % _excerpt(resp, api_key)
-            backoff(attempt, last_error, resp)
-            continue
+        ctype = str((getattr(resp, "headers", None) or {}).get("Content-Type") or "")
+        if "event-stream" in ctype and hasattr(resp, "iter_lines"):
+            content, data = _drain_stream(resp)
+            if data.get("error"):
+                last_error = "stream error: %s" % _redact(
+                    json.dumps(data["error"])[:200], api_key)
+                backoff(attempt, last_error, resp)
+                continue
+            if not content:
+                last_error = "empty stream from OpenRouter"
+                backoff(attempt, last_error, resp)
+                continue
+        else:
+            try:
+                data = resp.json()
+                content = data["choices"][0]["message"]["content"]
+            except Exception:
+                last_error = "malformed OpenRouter response body: %s" % _excerpt(resp, api_key)
+                backoff(attempt, last_error, resp)
+                continue
         if video_sent and continuation.is_silent_video_drop(data):
             raise EnhancerError(
                 "provider %s silently dropped the video part (video_tokens=0);"

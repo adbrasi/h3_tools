@@ -501,3 +501,99 @@ def test_cache_key_sensitive_to_continue_fields():
     assert enhancer.cache_key(**base, vision_format="cascade") != k0
     assert enhancer.cache_key(**base, context_sha="abc") != k0
     assert enhancer.cache_key(**base) == k0
+
+
+# ---- reorder_sections ---------------------------------------------------
+
+SHUFFLED = """subject_definitions:
+<Subject 1> is the woman.
+summary:
+[video continuation] She kisses her.
+retention_analysis:
+<Subject 1>: fully_preserved - kept.
+overall_soundscape:
+Forest sounds.
+non_diegetic_music:
+N/A
+detailed_description:
+The target video is static.
+[Shot 1] She enters."""
+
+
+def test_reorder_sections_restores_official_order():
+    fixed = enhancer.reorder_sections(SHUFFLED)
+    order = [fixed.index(l + ":") for l in enhancer._SECTION_ORDER]
+    assert order == sorted(order)
+    assert "[Shot 1] She enters." in fixed
+
+
+def test_reorder_sections_already_ordered_untouched():
+    text = "subject_definitions:\na\nsummary:\nb\ndetailed_description:\nc"
+    assert enhancer.reorder_sections(text) is text
+
+
+def test_reorder_sections_prose_untouched():
+    assert enhancer.reorder_sections("just a prompt") == "just a prompt"
+
+
+def test_sanitize_reorders_and_warns():
+    clean, warnings = enhancer.sanitize_output(SHUFFLED, [], "draft")
+    assert clean.rstrip().endswith("[Shot 1] She enters.") is False
+    assert any("out of order" in w for w in warnings)
+    order = [clean.index(l + ":") for l in enhancer._SECTION_ORDER]
+    assert order == sorted(order)
+
+
+# ---- streaming ----------------------------------------------------------
+
+def sse(obj):
+    return "data: " + json.dumps(obj)
+
+
+class FakeStreamResp:
+    status_code = 200
+    headers = {"Content-Type": "text/event-stream"}
+    text = ""
+
+    def __init__(self, lines):
+        self._lines = lines
+
+    def iter_lines(self, decode_unicode=True):
+        return iter(self._lines)
+
+
+def test_enhance_streams_and_assembles_content():
+    bodies = []
+    lines = [
+        sse({"choices": [{"delta": {"content": '{"prompt_final": '}}]}),
+        ": keep-alive comment",
+        sse({"choices": [{"delta": {"content": '"streamed"}'}}]}),
+        sse({"provider": "Google", "usage": {"completion_tokens": 7}}),
+        "data: [DONE]",
+    ]
+
+    def post(url, headers=None, json=None, timeout=None):
+        bodies.append(json)
+        return FakeStreamResp(lines)
+
+    assert call(post) == "streamed"
+    assert bodies[0]["stream"] is True
+
+
+def test_enhance_stream_error_chunk_retries():
+    seq = [FakeStreamResp([sse({"error": {"message": "provider blew up"}})]),
+           FakeResp(200, '{"prompt_final": "ok"}')]
+    assert call(lambda *a, **k: seq.pop(0)) == "ok"
+
+
+def test_enhance_stream_silent_video_drop_guard():
+    lines = [
+        sse({"choices": [{"delta": {"content": '{"prompt_final": "x"}'}}]}),
+        sse({"provider": "Google",
+             "usage": {"prompt_tokens_details": {"video_tokens": 0}}}),
+        "data: [DONE]",
+    ]
+    ctx = [{"type": "text", "text": "footage:"}, VID]
+    with pytest.raises(EnhancerError, match="dropped the video"):
+        call(lambda *a, **k: FakeStreamResp(lines),
+             context_parts=ctx, video_sent=True)
