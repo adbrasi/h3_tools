@@ -185,9 +185,9 @@ def test_enhance_success_first_try():
 
     assert call(post) == "rich"
     assert bodies[0]["response_format"] == {"type": "json_object"}
-    assert bodies[0]["temperature"] == 0.4
+    assert "temperature" not in bodies[0]  # model default; reasoning models reject it
     assert bodies[0]["reasoning"] == {"enabled": False}  # default: no thinking
-    assert bodies[0]["max_tokens"] == 1200
+    assert bodies[0]["max_tokens"] == 2000
     assert bodies[0]["provider"] == {"sort": "throughput"}
     assert bodies[0]["usage"] == {"include": True}
     assert bodies[0]["messages"][0]["role"] == "system"

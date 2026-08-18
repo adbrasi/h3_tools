@@ -27,7 +27,7 @@ CACHE_MAX_ENTRIES = 500
 # Without max_tokens the ratio applies to the provider's default (can be tens
 # of thousands) — unbounded serial reasoning was the 212s-per-call pathology.
 MAX_TOKENS_BY_EFFORT = {
-    "none": 1200,
+    "none": 2000,
     "low": 4000,
     "medium": 6000,
     "high": 9000,
@@ -214,8 +214,8 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
             "messages": [{"role": "system", "content": system_text},
                          {"role": "user", "content": user_content}],
             "response_format": {"type": "json_object"},
-            # low temperature: fewer malformed-JSON regenerations
-            "temperature": 0.4,
+            # no temperature: use each model's own default (reasoning models
+            # ignore or reject the parameter anyway)
             "max_tokens": MAX_TOKENS_BY_EFFORT.get(reasoning_effort, 4000),
             # default routing optimizes price (often the slowest provider);
             # we optimize tokens/sec, which dominates an ~800-token answer
