@@ -564,12 +564,14 @@ function setupNode(node) {
         // re-read: the board may have changed while the upload was in flight
         list = readRefs();
         if (!list) return;
+        // simple sequential names per type — short, predictable, and the LLM
+        // never typos them; rename on the tile when a semantic name helps
         const taken = new Set(effectiveNames(list));
-        const base = deriveName(data.name);
-        let name = base;
-        for (let n = 2; taken.has(name); n++) {
-          const suffix = `_${n}`;
-          name = base.slice(0, 64 - suffix.length) + suffix;
+        const base = { image: "imagem", video: "video", audio: "audio" }[type];
+        let name;
+        for (let n = 1; ; n++) {
+          name = `${base}_${n}`;
+          if (!taken.has(name)) break;
         }
         list.push({ name, type, file: `${SUBFOLDER}/${data.name}` });
         writeRefs(list);

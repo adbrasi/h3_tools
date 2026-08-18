@@ -374,9 +374,12 @@ overlay positioning beyond what addDOMWidget provides):
 - Toolbar: `+ Imagem`, `+ Vídeo`, `+ Áudio` buttons → hidden `<input type=file>` with
   the proper `accept` filter → `POST /api/upload/image` (multipart: `image=<file>`,
   `type=input`, `subfolder=h3_refs`, `overwrite=false` so the server dedups names) →
-  on response, append `{name: derivedSlug, type, file: "h3_refs/<returned name>"}` to
-  the JSON widget value. Slug derivation duplicates §4's rule (trivial, and drift is
-  harmless: the backend re-derives only when `name` is absent).
+  on response, append `{name, type, file: "h3_refs/<returned name>"}` to the JSON
+  widget value, where `name` is sequential per type — `imagem_N` / `video_N` /
+  `audio_N`, lowest free index — so board names stay short and typo-proof for the
+  LLM; renaming on the tile covers semantic names. §4's filename derivation remains
+  the headless fallback for JSON entries without `name` (the frontend mirrors it
+  only to display those).
 - Tiles (one per ref, grid): thumbnail (§6.3), editable name (click-to-edit text,
   validated against `^[a-z0-9_]{1,64}$` + uniqueness), type badge, the **current
   official tag** (`<Picture 2>`, `<Video 1>`, `♪ <Audio 1>`) computed client-side with
