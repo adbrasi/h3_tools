@@ -1,0 +1,13 @@
+[project]
+name = "h3_tools"
+version = "1.0.0"
+description = "MiniMax H3 Reference to Video (Pro): media board, @name mentions and an optional OpenRouter prompt enhancer, delegating all encoding to the native H3 node."
+license = { text = "MIT" }
+dependencies = ["requests"]
+
+[project.urls]
+Repository = "https://github.com/adbrasi/h3_tools"
+
+[tool.comfy]
+DisplayName = "h3_tools"
+PublisherId = "adbrasi"
