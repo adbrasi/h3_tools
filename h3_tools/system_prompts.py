@@ -105,8 +105,24 @@ Respond with ONLY this JSON object, no markdown fences, no commentary — the si
 {"prompt_final": "<the rewritten prompt>"}"""
 
 
+# injected between OBJECTIVE and _TAIL for the Continue node only (SPEC §12.5)
+_CONTINUATION = """
+
+CONTINUATION
+This is a continuation job: the target video opens with existing footage (anchored by the pipeline), and your prompt directs the video past its final frame.
+- The user message shows you that footage — the clip itself, or only its final frame — and states the clock: where the footage ends and where the target video ends. Everything the footage establishes is fact: subjects, wardrobe, environment, light, camera position, motion in progress. Unlike manifest references, you actually watched this footage; describe what you saw, and continue coherently from the exact state of the final frame — a gesture mid-air stays mid-air, the light does not jump, the camera resumes from where it stopped.
+- The footage has NO token: never invent an @name for it and never label it <Picture N>/<Video N>/<Audio N>. Refer to it in prose as "the source footage". Subjects that first appear in it are still authored as <Subject N> in subject_definitions, anchored in prose ("<Subject 1> is the red-haired woman seen in the source footage, ..."); @name tokens stay reserved for manifest references.
+- Include "video continuation" in the summary's bracketed task-type prefix.
+- Timeline: when the footage's end time is given, the shot script covers the FULL duration from 00:00.000 — cover the footage's span compactly as established fact (what it already shows), place the continuation point on its exact timestamp, and direct the new content from there to the end. When only a final frame is given, the whole clip is new: timestamps start at 00:00.000 and [Shot 1] opens on that frame.
+- Manifest @name references keep their normal roles — new subjects, voices or styles entering the continuation."""
+
+
 def _build(objective):
     return _HEAD + objective + _TAIL
+
+
+def _build_continue(objective):
+    return _HEAD + objective + _CONTINUATION + _TAIL
 
 
 # the all-rounder: serve the draft, pick the shot count the story needs
@@ -126,4 +142,11 @@ SYSTEM_PROMPTS = {
     "default": DEFAULT_SYSTEM_PROMPT,
     "multishot": MULTISHOT_SYSTEM_PROMPT,
     "single_take": SINGLE_TAKE_SYSTEM_PROMPT,
+}
+
+# Continue node: same presets with the CONTINUATION block spliced in
+SYSTEM_PROMPTS_CONTINUE = {
+    "default": _build_continue(_OBJECTIVE_DEFAULT),
+    "multishot": _build_continue(_OBJECTIVE_MULTISHOT),
+    "single_take": _build_continue(_OBJECTIVE_SINGLE_TAKE),
 }

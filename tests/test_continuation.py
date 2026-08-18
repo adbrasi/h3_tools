@@ -171,3 +171,18 @@ def test_is_silent_video_drop_non_google_reports_zero():
 def test_is_silent_video_drop_missing_usage():
     assert continuation.is_silent_video_drop({"provider": "Google"}) is False
     assert continuation.is_silent_video_drop({}) is False
+
+
+# ---- SYSTEM_PROMPTS_CONTINUE --------------------------------------------
+
+def test_continue_prompts_same_keys_with_continuation_block():
+    from h3_tools.system_prompts import SYSTEM_PROMPTS, SYSTEM_PROMPTS_CONTINUE
+    assert set(SYSTEM_PROMPTS_CONTINUE) == set(SYSTEM_PROMPTS)
+    for key, text in SYSTEM_PROMPTS_CONTINUE.items():
+        assert "CONTINUATION" in text
+        assert "CONTINUATION" not in SYSTEM_PROMPTS[key]
+        # spliced between the objective and the shared tail
+        assert text.index("OBJECTIVE") < text.index("CONTINUATION")
+        assert text.index("CONTINUATION") < text.index("REFERENCE TOKENS")
+        # the footage never gets a token of its own
+        assert "never invent an @name" in text
