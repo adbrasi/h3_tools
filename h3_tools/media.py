@@ -103,18 +103,29 @@ def encode_video_context(video, max_edge=768, target_fps=10.0,
     import comfy.utils
     from comfy_api.latest import InputImpl, Types
 
+    full_duration = float(video.get_duration())
+    if full_duration > max_seconds:
+        logging.info("h3_tools: continuation video is %.1fs; sending only the "
+                     "last %.1fs to the LLM", full_duration, max_seconds)
+        # trim BEFORE decoding: a negative start_time seeks from the end, so
+        # only the window is ever turned into tensors (a long 1080p source
+        # decoded whole would exhaust RAM before any post-decode cut)
+        trimmed = None
+        if hasattr(video, "as_trimmed"):
+            trimmed = video.as_trimmed(start_time=-max_seconds,
+                                       duration=max_seconds,
+                                       strict_duration=False)
+        if trimmed is not None:
+            video = trimmed
     components = video.get_components()
     frames = components.images
     fps = float(components.frame_rate)
     n_src = int(frames.shape[0])
     if n_src <= 0 or fps <= 0:
         raise MediaError("could not read frames from the video to continue")
-    full_duration = n_src / fps
-    if full_duration > max_seconds:
+    if n_src / fps > max_seconds + 0.05:  # as_trimmed unavailable or a no-op
         keep = int(round(max_seconds * fps))
         frames = frames[n_src - keep:]
-        logging.info("h3_tools: continuation video is %.1fs; sending only the "
-                     "last %.1fs to the LLM", full_duration, keep / fps)
     sent_duration = int(frames.shape[0]) / fps
     out_fps = min(target_fps, fps)
     if out_fps < fps:

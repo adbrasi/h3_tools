@@ -186,3 +186,32 @@ def test_continue_prompts_same_keys_with_continuation_block():
         assert text.index("CONTINUATION") < text.index("REFERENCE TOKENS")
         # the footage never gets a token of its own
         assert "never invent an @name" in text
+        # the footage is sent muted; the LLM must not invent its audio
+        assert "SILENT" in text
+
+
+def test_fetch_video_models_empty_body_returns_none_uncached():
+    calls = []
+
+    class Resp:
+        status_code = 200
+
+        def json(self):
+            return {"data": []}
+
+    def get(url, timeout=None):
+        calls.append(url)
+        return Resp()
+
+    continuation._MODELS_CACHE.update(at=None, models=None)
+    assert continuation.fetch_video_models(get=get, now=lambda: 0.0) is None
+    assert continuation.fetch_video_models(get=get, now=lambda: 1.0) is None
+    assert len(calls) == 2  # an empty catalog is never cached
+
+
+def test_filter_models_ignores_routing_suffix():
+    supported = {"google/gemini-3-flash-preview"}
+    usable, skipped = continuation.filter_models_for_video(
+        ["google/gemini-3-flash-preview:nitro"], supported)
+    assert usable == ["google/gemini-3-flash-preview:nitro"]
+    assert skipped == []

@@ -200,11 +200,6 @@ def _enhancer_inputs(presets):
                     "serverless hosts."),
         io.Boolean.Input("enhancer_vision", default=False,
             tooltip="Send reference images (and one frame per video) to the LLM."),
-        io.Combo.Input("vision_format", options=["default", "cascade"],
-            default="default",
-            tooltip="How media reaches the LLM: 'default' = one message with "
-                    "interleaved label+media parts; 'cascade' = one message "
-                    "per media item. Part of the enhancer cache key."),
         io.Combo.Input("system_prompt_preset",
             options=list(presets.keys()), default="default",
             tooltip="Built-in enhancer system prompt: what kind of video the "
@@ -213,6 +208,13 @@ def _enhancer_inputs(presets):
             tooltip="Connect a STRING to replace the preset verbatim."),
         io.Int.Input("enhancer_seed", default=0, min=0, max=2**31 - 1,
             tooltip="Part of the enhancer cache key only — bump to re-roll the LLM."),
+        # appended LAST on purpose: workflow JSON stores widget values by
+        # position, so new widgets must never enter the middle of the list
+        io.Combo.Input("vision_format", options=["default", "cascade"],
+            default="default",
+            tooltip="How media reaches the LLM: 'default' = one message with "
+                    "interleaved label+media parts; 'cascade' = one message "
+                    "per media item. Part of the enhancer cache key."),
     ]
 
 
@@ -458,7 +460,9 @@ class H3RefToVideoContinuePro(io.ComfyNode):
                 context_media = {"type": "video_url", "video_url": {"url": data_url}}
                 video_sent = True
             else:
-                data_url = media.image_data_url(image_last_frame)
+                # a batched IMAGE input means "the footage's closing frames" —
+                # the LAST one is the state being continued
+                data_url = media.image_data_url(image_last_frame[-1:])
                 context_media = {"type": "image_url", "image_url": {"url": data_url}}
                 sent_duration = None
                 video_sent = False

@@ -94,8 +94,20 @@ def fetch_video_models(get=None, now=None):
         logging.warning("h3_tools: video-model preflight failed (%s); relying "
                         "on the runtime guard", e)
         return None
+    if not models:
+        # a 200 with an unexpected/empty body must never hard-block every
+        # model for an hour — treat it like a failed preflight, uncached
+        logging.warning("h3_tools: video-model preflight returned no models; "
+                        "relying on the runtime guard")
+        return None
     _MODELS_CACHE.update(at=now(), models=models)
     return models
+
+
+def _supports_video(model, supported):
+    slug = model.lower()
+    # routing suffixes (:nitro, :floor, :online, ...) are not in the catalog
+    return slug in supported or slug.split(":")[0] in supported
 
 
 def filter_models_for_video(models, supported):
@@ -103,8 +115,8 @@ def filter_models_for_video(models, supported):
     present. supported=None (preflight failed) keeps everything usable."""
     if supported is None:
         return list(models), []
-    usable = [m for m in models if m.lower() in supported]
-    skipped = [m for m in models if m.lower() not in supported]
+    usable = [m for m in models if _supports_video(m, supported)]
+    skipped = [m for m in models if not _supports_video(m, supported)]
     return usable, skipped
 
 
