@@ -58,6 +58,9 @@ function deriveName(filename) {
   const base = filename.replace(/\\/g, "/").split("/").pop();
   const stem = base.includes(".") ? base.slice(0, base.lastIndexOf(".")) : base;
   let name = stem.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  // drop trailing save-counter runs ("krea2_turbo_00017" -> "krea2_turbo")
+  const stripped = name.replace(/(?:_\d{3,})+$/, "");
+  if (stripped) name = stripped;
   if (!name || /^[0-9]/.test(name)) name = "m_" + name;
   return name.slice(0, 64);
 }

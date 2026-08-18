@@ -9,6 +9,7 @@ use_soundtrack consumes the next <Audio j> ordinal right before taking its
 <Video k> — then standalone audios continue the audio counter.
 """
 
+import difflib
 import json
 import re
 from dataclasses import dataclass, field
@@ -43,6 +44,11 @@ def derive_name(filename: str) -> str:
     base = filename.replace("\\", "/").rsplit("/", 1)[-1]
     stem = base.rsplit(".", 1)[0] if "." in base else base
     name = re.sub(r"[^a-z0-9]+", "_", stem.lower()).strip("_")
+    # drop trailing save-counter runs ("krea2_turbo_00017" -> "krea2_turbo"):
+    # long digit tails carry no meaning and LLMs typo them in mentions
+    stripped = re.sub(r"(?:_\d{3,})+$", "", name)
+    if stripped:
+        name = stripped
     if not name or name[0].isdigit():
         name = "m_" + name
     return name[:NAME_MAX]
@@ -173,6 +179,44 @@ def build_final_prompt(text: str, refs: list) -> str:
     if lines:
         return "\n".join(lines) + "\n\n" + body
     return body
+
+
+def closest_name(token: str, refs: list):
+    """Best fuzzy match for a mistyped mention, or None when not confident.
+
+    Confident = similarity >= 0.8 AND clearly ahead of the runner-up, so an
+    LLM typo ("krea2_turbo_0017") snaps to its reference while genuinely
+    unknown tokens stay unmatched.
+    """
+    low = token.lower()
+    scored = sorted(
+        ((difflib.SequenceMatcher(None, low, r.name).ratio(), r.name) for r in refs),
+        reverse=True)
+    if not scored or scored[0][0] < 0.8:
+        return None
+    if len(scored) > 1 and scored[0][0] - scored[1][0] < 0.05:
+        return None
+    return scored[0][1]
+
+
+def repair_mentions(text: str, refs: list):
+    """Fix near-miss @tokens (LLM typos) to their closest reference name.
+
+    Returns (text, [(typed_token, fixed_name), ...]).
+    """
+    known = {r.name for r in refs}
+    repairs = []
+
+    def repl(m):
+        if m.group(1).lower() in known:
+            return m.group(0)
+        fixed = closest_name(m.group(1), refs)
+        if fixed is None:
+            return m.group(0)
+        repairs.append((m.group(0), fixed))
+        return "@" + fixed
+
+    return MENTION_RE.sub(repl, text), repairs
 
 
 def strip_unknown_mentions(text: str, refs: list):

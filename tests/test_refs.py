@@ -36,6 +36,19 @@ def test_derive_name_truncates_to_64():
     assert refs.derive_name("x" * 200 + ".png") == "x" * 64
 
 
+def test_derive_name_strips_trailing_counters():
+    assert refs.derive_name("Krea2_turbo_00017_.png") == "krea2_turbo"
+    assert refs.derive_name("ComfyUI_01817_.png") == "comfyui"
+
+
+def test_derive_name_keeps_short_digit_suffix():
+    assert refs.derive_name("take_2.png") == "take_2"
+
+
+def test_derive_name_all_digits_falls_back():
+    assert refs.derive_name("00017.png") == "m_00017"
+
+
 # ---- parse_references ---------------------------------------------------
 
 def test_parse_full_set():
@@ -254,6 +267,29 @@ def test_strip_unknown_before_punctuation():
     got = make([{"type": "image", "file": "garota.png"}])
     out, _ = refs.strip_unknown_mentions("word @ghost, punct", got)
     assert out == "word, punct"
+
+
+def test_repair_mentions_fixes_llm_typo():
+    got = make([{"name": "krea2_turbo_00017", "type": "image", "file": "a.png"},
+                {"name": "comfyui_01817", "type": "image", "file": "b.png"}])
+    out, repairs = refs.repair_mentions("start on @krea2_turbo_0017 outdoors", got)
+    assert out == "start on @krea2_turbo_00017 outdoors"
+    assert repairs == [("@krea2_turbo_0017", "krea2_turbo_00017")]
+
+
+def test_repair_mentions_leaves_unrelated_tokens():
+    got = make([{"type": "image", "file": "garota.png"}])
+    out, repairs = refs.repair_mentions("a @ghost here", got)
+    assert out == "a @ghost here"
+    assert repairs == []
+
+
+def test_repair_mentions_refuses_ambiguous_match():
+    got = make([{"name": "garota_1", "type": "image", "file": "a.png"},
+                {"name": "garota_2", "type": "image", "file": "b.png"}])
+    out, repairs = refs.repair_mentions("see @garota_3", got)
+    assert out == "see @garota_3"
+    assert repairs == []
 
 
 # ---- native Autogrow slot pairing ---------------------------------------

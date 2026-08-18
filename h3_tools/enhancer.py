@@ -90,10 +90,15 @@ def build_manifest(refs_list, durations=None):
 
 
 def sanitize_output(text, refs_list, original_prompt):
-    """Asymmetric sanitation (SPEC §5.4): strip invented @tokens, warn on drops."""
-    clean, removed = refs.strip_unknown_mentions(text, refs_list)
-    warnings = ["enhancer output mentioned unknown reference %s; stripped" % tok
-                for tok in removed]
+    """Sanitation (SPEC §5.4): repair near-miss @tokens (LLM typos), strip the
+    rest, warn on drops — user mistakes fail earlier, LLM mistakes never kill
+    the job."""
+    clean, repairs = refs.repair_mentions(text, refs_list)
+    warnings = ['enhancer output misspelled %s; corrected to "@%s"' % (typed, fixed)
+                for typed, fixed in dict.fromkeys(repairs)]
+    clean, removed = refs.strip_unknown_mentions(clean, refs_list)
+    warnings += ["enhancer output mentioned unknown reference %s; stripped" % tok
+                 for tok in dict.fromkeys(removed)]
     known = {r.name for r in refs_list}
     wanted = {m.lower() for m in refs.find_mentions(original_prompt)} & known
     kept = {m.lower() for m in refs.find_mentions(clean)}
@@ -140,12 +145,14 @@ def cache_put(cache_dir, key, prompt_final, model, max_entries=CACHE_MAX_ENTRIES
 
 
 def enhance(prompt, *, api_key, model, system_prompt, manifest,
-            target_duration=None, vision_parts=None, timeout=120,
+            target_duration=None, vision_parts=None, timeout=60,
             post=None, sleep=None):
     """Call OpenRouter and return prompt_final. 3 total attempts:
     network / 429 / 5xx retry with a short Retry-After-aware backoff; a parse
     failure retries with a "JSON only" nudge (kept for later attempts); other
-    4xx fail immediately. Never falls back silently to the raw prompt.
+    4xx fail immediately. A timeout also fails immediately — a model that
+    blew the read budget will blow it again, and the user is waiting.
+    Never falls back silently to the raw prompt.
     """
     if post is None:
         import requests
@@ -194,6 +201,10 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
                         json=body, timeout=(10, timeout))
         except Exception as e:
             last_error = _redact(str(e), api_key)
+            if "timeout" in type(e).__name__.lower():
+                raise EnhancerError(
+                    "enhancer request timed out (%ds read limit) with model %s: %s"
+                    % (timeout, model, last_error)) from e
             backoff(attempt)
             continue
         status = getattr(resp, "status_code", 0)

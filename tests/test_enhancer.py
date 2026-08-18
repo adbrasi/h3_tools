@@ -70,6 +70,14 @@ def test_sanitize_warns_dropped_user_mention():
     assert any("voz" in w for w in warnings)
 
 
+def test_sanitize_repairs_llm_typo():
+    out, warnings = enhancer.sanitize_output(
+        "a scene with @garotaa dancing", REFS, "@garota dança")
+    assert out == "a scene with @garota dancing"
+    assert any("misspelled" in w and "@garotaa" in w for w in warnings)
+    assert not any("dropped" in w for w in warnings)
+
+
 def test_sanitize_clean_output_no_warnings():
     out, warnings = enhancer.sanitize_output(
         "@garota dança ao som de @voz", REFS, "@garota e @voz")
@@ -179,7 +187,7 @@ def test_enhance_success_first_try():
     assert bodies[0]["temperature"] == 0.8
     assert bodies[0]["reasoning"] == {"effort": "medium"}
     assert bodies[0]["messages"][0]["role"] == "system"
-    assert timeouts[0] == (10, 120)  # fast connect failure, generous read
+    assert timeouts[0] == (10, 60)  # fast connect failure, 60s read budget
 
 
 def test_enhance_retries_5xx_then_succeeds():
@@ -199,6 +207,22 @@ def test_enhance_backoff_honors_retry_after():
            FakeResp(200, '{"prompt_final": "ok"}')]
     assert call(lambda *a, **k: seq.pop(0), sleep=sleeps.append) == "ok"
     assert sleeps == [3.0]
+
+
+def test_enhance_timeout_fails_fast():
+    class ReadTimeout(Exception):
+        pass
+
+    sleeps = []
+    calls = []
+
+    def post(*a, **k):
+        calls.append(1)
+        raise ReadTimeout("read timed out")
+
+    with pytest.raises(EnhancerError, match="timed out"):
+        call(post, sleep=sleeps.append)
+    assert len(calls) == 1 and sleeps == []  # no retry, no backoff
 
 
 def test_enhance_no_sleep_after_final_attempt():

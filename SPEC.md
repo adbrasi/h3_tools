@@ -153,7 +153,9 @@ Rules:
   type in the native order).
 - **`name`**: `^[a-z0-9_]{1,64}$`. When absent, derive from the file's basename:
   lowercase, strip extension, replace every non-`[a-z0-9]` run with `_`, trim `_`,
-  prefix with `m_` if it would start with a digit or be empty. Collisions (given or
+  drop trailing save-counter runs (`_\d{3,}`, so `krea2_turbo_00017` → `krea2_turbo`
+  — long digit tails are meaningless and LLMs typo them), prefix with `m_` if the
+  result would start with a digit or be empty. Collisions (given or
   derived) get `_2`, `_3`, … suffixes **only for derived names**; duplicated explicit
   names are a validation error.
 - **`file`**: resolved with `folder_paths.get_annotated_filepath(file)` (so
@@ -263,7 +265,9 @@ LLM reads and must preserve `@name` tokens, never raw `<Picture i>` tags.
   `model`, `messages` (see below), `response_format: {"type": "json_object"}`,
   `temperature: 0.8`, `reasoning: {"effort": "medium"}` (sent unconditionally;
   OpenRouter drops it upstream for non-reasoning models). Connect timeout 10 s,
-  read timeout 120 s. The key must never appear in logs, error messages, or any
+  read timeout 60 s; a timeout fails immediately with a clear error instead of
+  retrying (a model that blew the budget will blow it again, and the user is
+  waiting). The key must never appear in logs, error messages, or any
   output socket. Caveat outside the pack's control: ComfyUI includes widget
   values in execution-error payloads (`/history`), so shared/serverless hosts
   should use the env var, not the widget (documented in the tooltip + README).
@@ -296,10 +300,13 @@ LLM reads and must preserve `@name` tokens, never raw `<Picture i>` tags.
   carrying the provider's message (first ~200 chars), never a silent fallback to
   the raw prompt (silent quality degradation is worse than a visible failure).
 - **Post-enhancement sanitation** (asymmetric on purpose): `@name` tokens in the
-  **user's** prompt that don't resolve = validation error (§5.1). Unknown `@` tokens in
-  the **LLM's** output = stripped, with a logged warning (a hallucinating LLM must not
-  kill a serverless job). If the LLM dropped a `@name` the user had written, log a
-  warning; the ref still reaches the model unmentioned.
+  **user's** prompt that don't resolve = validation error (§5.1). Unknown `@` tokens
+  in the **LLM's** output are first fuzzy-repaired to the closest reference name
+  (similarity ≥ 0.8 with a clear winner — catches digit/letter typos like
+  `@krea2_turbo_0017`), then whatever remains unknown is stripped; both cases log a
+  warning (a hallucinating LLM must not kill a serverless job). If the LLM dropped a
+  `@name` the user had written, log a warning; the ref still reaches the model
+  unmentioned.
 - **Disk cache**: key = sha256 of canonical JSON
   `{prompt, refs: [{name, type, file, use_soundtrack, mtime_ns, size}], model,
   system, vision, seed}` (`use_soundtrack` changes the manifest the LLM sees, so

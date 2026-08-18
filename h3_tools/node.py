@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 
 import comfy.utils
 import folder_paths
@@ -177,10 +178,13 @@ class H3RefToVideoPro(io.ComfyNode):
         if enhance_prompt:
             logging.info("h3_tools: enhancing prompt via OpenRouter (%s, preset %s)",
                          enhancer_model, system_prompt_preset)
+            started = time.monotonic()
             working_prompt = cls._enhance(
                 prompt, ref_list, payloads, durations, enhancer_model,
                 openrouter_api_key, enhancer_vision, system_prompt_preset,
                 system_prompt_override, enhancer_seed, target_duration)
+            logging.info("h3_tools: enhancer done in %.1fs",
+                         time.monotonic() - started)
             pbar.update(1)
 
         final_prompt = refs.build_final_prompt(working_prompt, ref_list)
