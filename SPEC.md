@@ -117,7 +117,7 @@ transport inputs, no state in `node.properties`**):
 | `enhancer_model` | String | `"google/gemini-3-flash-preview"` | free text, OpenRouter model slug. NEVER a combo validated against a live API (breaks offline/headless validation) |
 | `openrouter_api_key` | String | `""` | empty → fall back to env `OPENROUTER_API_KEY`; missing both (with enhancer on) is an execution error |
 | `enhancer_vision` | Boolean | `false` | send reference images (and 1 frame per video) to the LLM |
-| `system_prompt_preset` | Combo (keys of `SYSTEM_PROMPTS`) | `default` | built-in system prompt presets synthesized from the official H3 guide (`h3_tools/system_prompts.py`): `default`, `multishot`, `single_take`, `dialogue`, `music_video` |
+| `system_prompt_preset` | Combo (keys of `SYSTEM_PROMPTS`) | `default` | one shared core (official H3 six-section format from `guide.md` + shot-script craft rules + a full worked output example); presets differ only by their OBJECTIVE block: `default`, `multishot`, `single_take` |
 | `system_prompt_override` | STRING **connection** (`force_input`), optional | — | a connected non-empty string replaces the chosen preset verbatim |
 | `enhancer_seed` | Int | 0 | part of the enhancer cache key; bump to re-roll the LLM |
 
@@ -275,13 +275,17 @@ LLM reads and must preserve `@name` tokens, never raw `<Picture i>` tags.
   2. if `enhancer_vision`: for each image ref, a text part `@name (image):` followed by
      an `image_url` part (data URL, JPEG q85, long edge ≤ 1024); for each video ref,
      the same with one frame sampled from the middle of the clip. Audio is never sent.
-- **Built-in system prompts**: preset per `system_prompt_preset`, defined in
-  `h3_tools/system_prompts.py` (synthesized from the official MiniMax guide,
-  `guide.md`). Contract every preset implements: rewrite the draft into the H3
-  six-section full-reference format; preserve every `@name` token spelled
-  identically; never invent `@` tokens; never describe media content not shown;
-  fit all timestamps inside the provided "Target video duration: X.Xs" line;
-  output only `{"prompt_final": "..."}`.
+- **Built-in system prompts**: one shared core (`h3_tools/system_prompts.py`)
+  synthesized from `guide.md` (official H3 six-section full-reference format,
+  including its complete worked example converted to `@name` tokens) plus the
+  owner's shot-script craft material (one-primary-camera-move rule, rhythm
+  words over gear specs, camera/subject motion separated, banned vague words,
+  physical specificity, timecoded shots with a setup→development→payoff arc).
+  Presets swap only the OBJECTIVE block. Contract every preset implements:
+  preserve every `@name` token spelled identically; never invent `@` tokens;
+  never describe media content not shown; fit all timestamps inside the
+  provided "Target video duration: X.Xs" line; output only
+  `{"prompt_final": "..."}`.
 - **Response parsing**: strip code fences if present → first balanced `{...}` →
   `json.loads` → `prompt_final` must be a non-empty string.
 - **Retry/error policy**: up to 3 total attempts. Network / 429 / 5xx failures

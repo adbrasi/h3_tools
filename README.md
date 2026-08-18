@@ -78,13 +78,14 @@ Results are cached on disk (`user/h3_tools/enhancer_cache/`) keyed by
 prompt/refs/model/system/vision/seed/duration — bump `enhancer_seed` to
 re-roll. Failures after 3 attempts are hard errors, never silent fallbacks.
 
-`system_prompt_preset` picks the kind of video the LLM writes for —
-`default`, `multishot` (cuts with exact timestamps), `single_take`
-(plano-sequência), `dialogue` (speech/lip-sync driven) or `music_video`
-(audio-led) — all synthesized from the official MiniMax guide (`guide.md`).
-Connect a STRING into `system_prompt_override` to replace the preset
-verbatim. The LLM always receives the target video duration and each
-reference's duration, so timestamps land inside the real clock.
+`system_prompt_preset` picks the objective the LLM directs for — `default`,
+`multishot` (cuts on exact timecodes) or `single_take` (plano-sequência).
+All presets share one core built from the official MiniMax guide
+(`guide.md`): the H3 six-section format, shot-script craft rules and a full
+worked output example. Connect a STRING into `system_prompt_override` to
+replace the preset verbatim. The LLM always receives the target video
+duration and each reference's duration, so timestamps land on the real
+clock.
 
 ## Design docs
 
