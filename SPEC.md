@@ -525,6 +525,109 @@ shared across node instances; plaintext API keys served by unauthenticated GET r
 `IS_CHANGED = NaN` re-running the LLM every execution; silent `""` substitution of
 stale mentions. Every one of these has a corresponding positive decision above.
 
+## 12. Second node: `H3RefToVideoContinuePro` (approved design, pending implementation)
+
+Decisions locked with the owner on 2026-08-18. The existing `H3RefToVideoPro`
+stays untouched; everything below is additive.
+
+### 12.1 Concept
+
+`MiniMax H3 Reference to Video Continue (Pro)`: identical to the Pro node
+(board, @mentions, enhancer, encode delegation) plus **continuation context
+for the LLM**. The video/image inputs below feed ONLY the prompt enhancer —
+the pixel-level continuation stays with the native `MiniMaxH3AddGuide`, which
+the user wires downstream (`positive`/`latent` → AddGuide with the source
+frames/audio → sampler). This node never touches conditioning mechanics.
+
+### 12.2 New inputs (sockets, both optional, at least one required at execute)
+
+| name | type | role |
+|---|---|---|
+| `video` | VIDEO | the footage being continued; sent WHOLE to the LLM (§12.4); its duration drives the timeline math |
+| `image_last_frame` | IMAGE | fallback context when no video: only this image is sent |
+
+`video` wins when both are connected (log info). Neither connected →
+execution error "connect video or image_last_frame (or use the plain Pro
+node)". These are graph sockets on purpose (like `system_prompt_override`) —
+ComfyUI built-ins can produce them; nothing is uploaded through the board.
+
+### 12.3 New widget: `duration_mode` (Combo `total` | `new_only`, default `total`)
+
+- `total` + video: `length` is the FINAL video duration; the continuation
+  spans `source_duration → total`. Error if the source is longer than the
+  total. Latent length = `length` (the AddGuide anchor lives inside it).
+- `new_only` + video: total = source + `length`; the latent is built with
+  `align_frame_count(source_frames + length)` and the LLM gets the full
+  timeline.
+- image mode (either setting): the source duration is unknown → the LLM is
+  told "continue from this final frame; the continuation lasts `length/24` s,
+  timestamps start at 00:00.000"; latent = `length`.
+
+### 12.4 Sending the video to the LLM (verified against live OpenRouter, 2026-08-18)
+
+- Part shape: `{"type": "video_url", "video_url": {"url": "data:video/mp4;base64,..."}}`.
+  Base64 is the only portable path (hosted URLs: AI-Studio Gemini = YouTube
+  only; Vertex = none).
+- **Preprocess before encoding** (duration is the only cost lever — Gemini
+  bills exactly 258 tokens/s regardless of resolution; file size only affects
+  upload latency): mp4/h264, audio stripped, long side ≤ 768 px, 8-12 fps,
+  crf ≈ 28. A 10 s clip ≈ 300 KB ≈ 4.6 s round-trip. Hard caps: send only the
+  LAST 30 s of longer sources (continuation cares about the end; log info);
+  reject > 20 MB after encoding. Encoding reuses the native video API
+  (`VideoFromComponents(...).save_to(...)` + `comfy.utils.common_upscale`).
+- **Support detection** (67 of 414 models accept video; OpenAI/Anthropic/
+  Mistral/xAI/DeepSeek: none):
+  1. preflight `GET /api/v1/models?input_modalities=video` (in-memory cache
+     ~1 h; on network failure skip and rely on the runtime guard);
+  2. runtime: HTTP 404 with "No endpoints found that support input video" →
+     clear error suggesting `image_last_frame` or a video-capable model
+     (point at `openrouter.ai/models?input_modalities=video`);
+  3. silent-drop guard: on HTTP 200 from a Google provider with a video part
+     sent and `usage.prompt_tokens_details.video_tokens == 0`, the part was
+     dropped — hard error (do NOT apply to non-Google providers, which
+     legitimately report 0);
+  4. the model-fallback chain skips non-video slugs while a video part is
+     present (logged) instead of burning an attempt.
+
+### 12.5 Enhancer changes
+
+- **System prompts**: same core and the same 3 presets; `system_prompts.py`
+  gains a CONTINUATION block injected between OBJECTIVE and the shared tail
+  (exported as `SYSTEM_PROMPTS_CONTINUE`, same keys). Constraints for its
+  author: the existing footage is established fact — continue subjects,
+  light, camera and motion coherently from the final frame; timestamps per
+  §12.3; the `[video continuation]` summary prefix is encouraged; the source
+  footage gets NO invented @token or `<Video N>` label (it enters the model
+  via AddGuide latents, not via reference presentation).
+- **User message**: a continuation context part ("This is the footage to
+  continue (X.Xs); the target video continues it from X.Xs to Y.Ys total." /
+  image variant) + the video_url or image part, then the draft + manifest as
+  today.
+- **Cache key additions**: `duration_mode`, `vision_format` (§12.6), and a
+  sha256 of the exact encoded payload sent (video or image data URL) — socket
+  tensors have no file stats.
+- Continue-node context media is sent whenever the enhancer is on;
+  `enhancer_vision` keeps controlling reference images only.
+
+### 12.6 Shared improvement: `vision_format` (Combo, BOTH nodes, default `default`)
+
+- `default`: current behavior — one user message with interleaved label/image
+  parts.
+- `cascade`: one user message per media item — a text part naming it
+  ("@nome (image):", "footage to continue (X.Xs):") + its image/video part —
+  followed by the main text message. Owner will A/B the two.
+- Part of the enhancer cache key.
+
+### 12.7 Frontend / outputs / tests
+
+- Outputs identical to Pro (`positive`, `latent`, `final_prompt`).
+- `web/board.js` gates on both node ids; the board/editor works unchanged.
+- Tests: timeline math per `duration_mode` (pure), continuation message
+  building, video-support detection logic (mocked models list + 404 body +
+  silent-drop guard), cascade vs default message shapes, cache-key
+  sensitivity to the new fields. Video re-encode itself is
+  integration-tested manually (needs ComfyUI).
+
 ## Appendix A — original default enhancer system prompt (superseded)
 
 > Superseded in v1.1: the live prompts are the guide-derived presets in
