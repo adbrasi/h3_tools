@@ -10,14 +10,14 @@ except ImportError as e:
 
 from comfy_api.latest import ComfyExtension
 
-from .h3_tools.node import H3RefToVideoPro
+from .h3_tools.node import H3RefToVideoContinuePro, H3RefToVideoPro
 
 WEB_DIRECTORY = "./web"
 
 
 class H3ToolsExtension(ComfyExtension):
     async def get_node_list(self):
-        return [H3RefToVideoPro]
+        return [H3RefToVideoPro, H3RefToVideoContinuePro]
 
 
 async def comfy_entrypoint() -> H3ToolsExtension:
