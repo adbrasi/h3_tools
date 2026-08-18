@@ -1,4 +1,4 @@
-// h3_tools — reference board + @mention editor for H3RefToVideoPro.
+// h3_tools — reference board + @mention editor for the H3 Pro nodes.
 //
 // Everything the backend needs lives in the two String widgets ("prompt",
 // "references"); this extension is a pure view/controller over them. No
@@ -8,7 +8,7 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const NODE_ID = "H3RefToVideoPro";
+const NODE_IDS = new Set(["H3RefToVideoPro", "H3RefToVideoContinuePro"]);
 const SUBFOLDER = "h3_refs";
 const CAPS = { image: 9, video: 3, audio: 3 };
 const NAME_RE = /^[a-z0-9_]{1,64}$/;
@@ -676,7 +676,7 @@ function setupNode(node) {
 app.registerExtension({
   name: "h3_tools.board",
   beforeRegisterNodeDef(nodeType, nodeData) {
-    if (nodeData.name !== NODE_ID) return;
+    if (!NODE_IDS.has(nodeData.name)) return;
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);

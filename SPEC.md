@@ -525,7 +525,7 @@ shared across node instances; plaintext API keys served by unauthenticated GET r
 `IS_CHANGED = NaN` re-running the LLM every execution; silent `""` substitution of
 stale mentions. Every one of these has a corresponding positive decision above.
 
-## 12. Second node: `H3RefToVideoContinuePro` (approved design, pending implementation)
+## 12. Second node: `H3RefToVideoContinuePro`
 
 Decisions locked with the owner on 2026-08-18. The existing `H3RefToVideoPro`
 stays untouched; everything below is additive.

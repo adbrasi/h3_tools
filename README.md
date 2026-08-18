@@ -1,6 +1,6 @@
 # h3_tools — MiniMax H3 Reference to Video (Pro)
 
-One node that replaces the native MiniMax H3 ref2va workflow of "up to 18
+Two nodes that replace the native MiniMax H3 ref2va workflow of "up to 18
 loader nodes + hand-written `<Picture 1>` tags" with:
 
 - a **media board**: upload images / videos / audios straight on the node,
@@ -32,10 +32,37 @@ native graph.
 Inputs: `clip`, `vae`, `audio_vae` + widgets `prompt`, `references` (JSON,
 managed by the board), `width`, `height`, `length`, `ref_image_size`, and the
 enhancer group (`enhance_prompt`, `enhancer_model`, `openrouter_api_key`,
-`enhancer_vision`, `system_prompt_override`, `enhancer_seed`).
+`enhancer_vision`, `vision_format`, `system_prompt_override`, `enhancer_seed`).
 
 Outputs: `positive` (CONDITIONING), LATENT (AV latent ready for sampling),
 `final_prompt` (STRING — the exact text handed to the native node).
+
+### `MiniMax H3 Reference to Video Continue (Pro)` (`H3RefToVideoContinuePro`)
+
+The Pro node plus continuation context **for the LLM only** — the pixel-level
+continuation stays with the native `MiniMaxH3AddGuide`, which you wire
+downstream (`positive`/`latent` → AddGuide with the source frames → sampler).
+
+- `video` (VIDEO socket): the footage being continued, sent WHOLE to the LLM —
+  re-encoded small (h264, no audio, ≤768px, ~10fps; only the last 30s of
+  longer sources). Needs a video-capable model
+  (openrouter.ai/models?input_modalities=video — Gemini works, GPT/Claude
+  don't); non-video models are detected and skipped/erroed with guidance.
+- `image_last_frame` (IMAGE socket): fallback when no video — only this frame
+  is sent. `video` wins when both are connected.
+- `duration_mode`: `total` = `length` is the FINAL length, the continuation
+  spans source end → total (errors if the source is longer); `new_only` =
+  `length` is the new part, the latent grows to source + length. With
+  `image_last_frame` the source clock is unknown, so `length` is always the
+  new part and timestamps start at 00:00.000.
+- The continuation footage is sent whenever the enhancer is on;
+  `enhancer_vision` keeps controlling reference images only. System prompts
+  are the same 3 presets with a CONTINUATION block (the footage is established
+  fact, gets no `@token`, and the shot script covers the full timeline).
+
+`vision_format` (both nodes): how media reaches the LLM — `default` = one
+message with interleaved label+media parts; `cascade` = one message per media
+item. Part of the enhancer cache key; A/B them freely.
 
 ## Headless / API usage
 
