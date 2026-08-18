@@ -63,6 +63,10 @@ class H3RefToVideoPro(io.ComfyNode):
                             "@name mentions are preserved."),
                 io.String.Input("enhancer_model", default="google/gemini-3-flash-preview",
                     tooltip="OpenRouter model slug (free text)."),
+                io.String.Input("enhancer_model_fallback", default="",
+                    tooltip="Optional second model slug, tried when the main model "
+                            "fails for good (timeout, provider error, unparseable "
+                            "output). Empty disables the fallback."),
                 io.String.Input("openrouter_api_key", default="",
                     tooltip="Empty falls back to the OPENROUTER_API_KEY environment "
                             "variable. Never logged or cached by this pack — but "
@@ -138,9 +142,9 @@ class H3RefToVideoPro(io.ComfyNode):
 
     @classmethod
     def execute(cls, clip, vae, audio_vae, prompt, references, width, height, length,
-                ref_image_size, enhance_prompt, enhancer_model, openrouter_api_key,
-                enhancer_vision, system_prompt_preset, enhancer_seed,
-                system_prompt_override=None) -> io.NodeOutput:
+                ref_image_size, enhance_prompt, enhancer_model, enhancer_model_fallback,
+                openrouter_api_key, enhancer_vision, system_prompt_preset,
+                enhancer_seed, system_prompt_override=None) -> io.NodeOutput:
         ref_list = refs.parse_references(references)
         unknown = refs.unknown_mentions(prompt, ref_list)
         if unknown:
@@ -181,8 +185,9 @@ class H3RefToVideoPro(io.ComfyNode):
             started = time.monotonic()
             working_prompt = cls._enhance(
                 prompt, ref_list, payloads, durations, enhancer_model,
-                openrouter_api_key, enhancer_vision, system_prompt_preset,
-                system_prompt_override, enhancer_seed, target_duration)
+                enhancer_model_fallback, openrouter_api_key, enhancer_vision,
+                system_prompt_preset, system_prompt_override, enhancer_seed,
+                target_duration)
             logging.info("h3_tools: enhancer done in %.1fs",
                          time.monotonic() - started)
             pbar.update(1)
@@ -221,8 +226,9 @@ class H3RefToVideoPro(io.ComfyNode):
         return io.NodeOutput(cond, latent, final_prompt)
 
     @classmethod
-    def _enhance(cls, prompt, ref_list, payloads, durations, model, api_key_widget,
-                 vision, preset, system_override, seed, target_duration):
+    def _enhance(cls, prompt, ref_list, payloads, durations, model, fallback_model,
+                 api_key_widget, vision, preset, system_override, seed,
+                 target_duration):
         api_key = api_key_widget or os.environ.get("OPENROUTER_API_KEY", "")
         if not api_key:
             raise ValueError(
@@ -246,14 +252,20 @@ class H3RefToVideoPro(io.ComfyNode):
             ref_stats.append({"name": r.name, "type": r.type, "file": r.file,
                               "use_soundtrack": r.use_soundtrack,
                               "mtime_ns": mtime_ns, "size": size})
-        key = enhancer.cache_key(prompt, ref_stats, model, system_prompt, vision,
-                                 seed, duration=target_duration)
+        models = [model]
+        fallback_model = (fallback_model or "").strip()
+        if fallback_model and fallback_model != model:
+            models.append(fallback_model)
+        keys = {m: enhancer.cache_key(prompt, ref_stats, m, system_prompt, vision,
+                                      seed, duration=target_duration)
+                for m in models}
         cache_dir = os.path.join(folder_paths.get_user_directory(),
                                  "h3_tools", "enhancer_cache")
-        cached = enhancer.cache_get(cache_dir, key)
-        if cached is not None:
-            logging.info("h3_tools: enhancer cache hit")
-            return cached
+        for m in models:
+            cached = enhancer.cache_get(cache_dir, keys[m])
+            if cached is not None:
+                logging.info("h3_tools: enhancer cache hit (%s)", m)
+                return cached
 
         vision_parts = None
         if vision:
@@ -270,12 +282,12 @@ class H3RefToVideoPro(io.ComfyNode):
                 vision_parts.append({"type": "image_url", "image_url": {"url": url}})
 
         manifest = enhancer.build_manifest(ref_list, durations)
-        result = enhancer.enhance(prompt, api_key=api_key, model=model,
-                                  system_prompt=system_prompt, manifest=manifest,
-                                  target_duration=target_duration,
-                                  vision_parts=vision_parts)
+        used_model, result = enhancer.enhance_with_fallback(
+            prompt, models=models, api_key=api_key, system_prompt=system_prompt,
+            manifest=manifest, target_duration=target_duration,
+            vision_parts=vision_parts)
         clean, warnings = enhancer.sanitize_output(result, ref_list, prompt)
         for warning in warnings:
             logging.warning("h3_tools: %s", warning)
-        enhancer.cache_put(cache_dir, key, clean, model)
+        enhancer.cache_put(cache_dir, keys[used_model], clean, used_model)
         return clean

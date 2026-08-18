@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 
 import pytest
@@ -223,6 +224,41 @@ def test_enhance_timeout_fails_fast():
     with pytest.raises(EnhancerError, match="timed out"):
         call(post, sleep=sleeps.append)
     assert len(calls) == 1 and sleeps == []  # no retry, no backoff
+
+
+def test_enhance_logs_each_retry(caplog):
+    seq = [FakeResp(500, text="err-500"), FakeResp(200, '{"prompt_final": "ok"}')]
+    with caplog.at_level(logging.WARNING):
+        assert call(lambda *a, **k: seq.pop(0)) == "ok"
+    assert any("attempt 1/3" in r.message and "retrying" in r.message
+               for r in caplog.records)
+
+
+def test_enhance_with_fallback_uses_second_model():
+    calls = []
+
+    def post(url, headers=None, json=None, timeout=None):
+        calls.append(json["model"])
+        if json["model"] == "bad/one":
+            return FakeResp(400, text="no such model")
+        return FakeResp(200, '{"prompt_final": "ok"}')
+
+    used, out = enhancer.enhance_with_fallback(
+        "@garota dança", models=["bad/one", "good/two"], api_key="k",
+        system_prompt="SYS", manifest="- @garota (image)", vision_parts=None,
+        post=post, sleep=lambda s: None)
+    assert (used, out) == ("good/two", "ok")
+    assert calls == ["bad/one", "good/two"]
+
+
+def test_enhance_with_fallback_raises_when_all_fail():
+    def post(*a, **k):
+        return FakeResp(400, text="nope")
+
+    with pytest.raises(EnhancerError, match="nope"):
+        enhancer.enhance_with_fallback(
+            "p", models=["a/b", "c/d"], api_key="k", system_prompt="S",
+            manifest="m", vision_parts=None, post=post, sleep=lambda s: None)
 
 
 def test_enhance_no_sleep_after_final_attempt():

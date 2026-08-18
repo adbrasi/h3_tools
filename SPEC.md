@@ -115,6 +115,7 @@ transport inputs, no state in `node.properties`**):
 | `ref_image_size` | Combo `match`\|`max` | `match` | passed through to native |
 | `enhance_prompt` | Boolean | `false` | master switch for the LLM enhancer |
 | `enhancer_model` | String | `"google/gemini-3-flash-preview"` | free text, OpenRouter model slug. NEVER a combo validated against a live API (breaks offline/headless validation) |
+| `enhancer_model_fallback` | String | `""` | optional second model slug, tried with the full retry policy when the main model fails for good (timeout, provider error, unparseable output); empty disables it. Cache entries are per-model |
 | `openrouter_api_key` | String | `""` | empty → fall back to env `OPENROUTER_API_KEY`; missing both (with enhancer on) is an execution error |
 | `enhancer_vision` | Boolean | `false` | send reference images (and 1 frame per video) to the LLM |
 | `system_prompt_preset` | Combo (keys of `SYSTEM_PROMPTS`) | `default` | one shared core (official H3 six-section format from `guide.md` + shot-script craft rules + a full worked output example); presets differ only by their OBJECTIVE block: `default`, `multishot`, `single_take` |
@@ -292,13 +293,16 @@ LLM reads and must preserve `@name` tokens, never raw `<Picture i>` tags.
   `{"prompt_final": "..."}`.
 - **Response parsing**: strip code fences if present → first balanced `{...}` →
   `json.loads` → `prompt_final` must be a non-empty string.
-- **Retry/error policy**: up to 3 total attempts. Network / 429 / 5xx failures
-  retry with a short backoff (1 s then 2 s, overridden by `Retry-After` capped at
-  30 s; no sleep after the final attempt); a parse failure retries with an appended
-  system line "Return ONLY the JSON object, nothing else." (the nudge stays for any
-  later attempt); other 4xx fail immediately. After 3 failures → execution error
-  carrying the provider's message (first ~200 chars), never a silent fallback to
-  the raw prompt (silent quality degradation is worse than a visible failure).
+- **Retry/error policy**: up to 3 total attempts per model. Network / 429 / 5xx
+  failures retry with a short backoff (1 s then 2 s, overridden by `Retry-After`
+  capped at 30 s; no sleep after the final attempt); a parse failure retries with an
+  appended system line "Return ONLY the JSON object, nothing else." (the nudge stays
+  for any later attempt); other 4xx fail immediately. **Every failed attempt logs a
+  warning with the reason and the retry delay.** When the main model fails for good
+  and `enhancer_model_fallback` is set, the full policy runs again on the fallback
+  (logged); only then → execution error carrying the provider's message (first ~200
+  chars), never a silent fallback to the raw prompt (silent quality degradation is
+  worse than a visible failure).
 - **Post-enhancement sanitation** (asymmetric on purpose): `@name` tokens in the
   **user's** prompt that don't resolve = validation error (§5.1). Unknown `@` tokens
   in the **LLM's** output are first fuzzy-repaired to the closest reference name

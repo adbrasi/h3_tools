@@ -10,6 +10,7 @@ error path passes through _redact().
 
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -160,7 +161,7 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
     if sleep is None:
         sleep = time.sleep
 
-    def backoff(attempt, resp=None):
+    def backoff(attempt, reason, resp=None):
         if attempt >= 2:
             return  # that was the final attempt; the error is about to raise
         delay = 1.0 * (attempt + 1)
@@ -169,6 +170,8 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
             delay = min(30.0, float(headers.get("Retry-After") or delay))
         except (TypeError, ValueError):
             pass
+        logging.warning("h3_tools: enhancer attempt %d/3 failed (%s); retrying in %.1fs",
+                        attempt + 1, reason, delay)
         sleep(delay)
 
     user_text = "Draft prompt:\n%s\n\nReferences:\n%s" % (prompt, manifest)
@@ -205,12 +208,12 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
                 raise EnhancerError(
                     "enhancer request timed out (%ds read limit) with model %s: %s"
                     % (timeout, model, last_error)) from e
-            backoff(attempt)
+            backoff(attempt, last_error)
             continue
         status = getattr(resp, "status_code", 0)
         if status == 429 or status >= 500:
             last_error = "HTTP %d: %s" % (status, _excerpt(resp, api_key))
-            backoff(attempt, resp)
+            backoff(attempt, last_error, resp)
             continue
         if status != 200:
             raise EnhancerError("OpenRouter request failed (HTTP %d): %s"
@@ -219,12 +222,34 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
             content = resp.json()["choices"][0]["message"]["content"]
         except Exception:
             last_error = "malformed OpenRouter response body: %s" % _excerpt(resp, api_key)
-            backoff(attempt, resp)
+            backoff(attempt, last_error, resp)
             continue
         try:
             return parse_response(content)
         except EnhancerError as e:
             last_error = str(e)
+            if attempt < 2:
+                logging.warning("h3_tools: enhancer attempt %d/3 returned unparseable "
+                                "output (%s); retrying with a JSON-only nudge",
+                                attempt + 1, last_error)
             nudged = True
             continue
     raise EnhancerError("prompt enhancer failed after 3 attempts: %s" % last_error)
+
+
+def enhance_with_fallback(prompt, *, models, **kwargs):
+    """Try each model in order with the full enhance() policy.
+
+    Returns (model_used, prompt_final); re-raises the last EnhancerError when
+    every model failed.
+    """
+    last_error = None
+    for i, model in enumerate(models):
+        try:
+            return model, enhance(prompt, model=model, **kwargs)
+        except EnhancerError as e:
+            last_error = e
+            if i + 1 < len(models):
+                logging.warning("h3_tools: enhancer model %s failed (%s); falling "
+                                "back to %s", model, str(e)[:200], models[i + 1])
+    raise last_error
