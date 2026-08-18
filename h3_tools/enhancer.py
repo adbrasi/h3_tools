@@ -109,12 +109,13 @@ def sanitize_output(text, refs_list, original_prompt):
     return clean, warnings
 
 
-def cache_key(prompt, ref_stats, model, system, vision, seed, duration=None):
-    # duration is part of the LLM's input (timestamps must fit it), so it must
-    # be part of the key; width/height stay out on purpose
+def cache_key(prompt, ref_stats, model, system, vision, seed, duration=None,
+              reasoning=None):
+    # duration and reasoning are part of the LLM's input/behavior, so they are
+    # part of the key; width/height stay out on purpose
     payload = {"prompt": prompt, "refs": ref_stats, "model": model,
                "system": system, "vision": bool(vision), "seed": seed,
-               "duration": duration}
+               "duration": duration, "reasoning": reasoning}
     blob = json.dumps(payload, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
@@ -146,8 +147,8 @@ def cache_put(cache_dir, key, prompt_final, model, max_entries=CACHE_MAX_ENTRIES
 
 
 def enhance(prompt, *, api_key, model, system_prompt, manifest,
-            target_duration=None, vision_parts=None, timeout=60,
-            post=None, sleep=None):
+            target_duration=None, vision_parts=None, reasoning_effort="low",
+            timeout=60, post=None, sleep=None):
     """Call OpenRouter and return prompt_final. 3 total attempts:
     network / 429 / 5xx retry with a short Retry-After-aware backoff; a parse
     failure retries with a "JSON only" nudge (kept for later attempts); other
@@ -195,7 +196,7 @@ def enhance(prompt, *, api_key, model, system_prompt, manifest,
             "response_format": {"type": "json_object"},
             "temperature": 0.8,
             # dropped upstream by models without reasoning support
-            "reasoning": {"effort": "medium"},
+            "reasoning": {"effort": reasoning_effort},
         }
         try:
             resp = post(OPENROUTER_URL,

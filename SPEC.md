@@ -116,6 +116,7 @@ transport inputs, no state in `node.properties`**):
 | `enhance_prompt` | Boolean | `false` | master switch for the LLM enhancer |
 | `enhancer_model` | String | `"google/gemini-3-flash-preview"` | free text, OpenRouter model slug. NEVER a combo validated against a live API (breaks offline/headless validation) |
 | `enhancer_model_fallback` | String | `""` | optional second model slug, tried with the full retry policy when the main model fails for good (timeout, provider error, unparseable output); empty disables it. Cache entries are per-model |
+| `enhancer_reasoning` | Combo `low`\|`medium`\|`high`\|`xhigh` | `low` | reasoning effort sent to OpenRouter (dropped upstream by non-reasoning models); part of the cache key |
 | `openrouter_api_key` | String | `""` | empty → fall back to env `OPENROUTER_API_KEY`; missing both (with enhancer on) is an execution error |
 | `enhancer_vision` | Boolean | `false` | send reference images (and 1 frame per video) to the LLM |
 | `system_prompt_preset` | Combo (keys of `SYSTEM_PROMPTS`) | `default` | one shared core (official H3 six-section format from `guide.md` + shot-script craft rules + a full worked output example); presets differ only by their OBJECTIVE block: `default`, `multishot`, `single_take` |
@@ -264,8 +265,9 @@ LLM reads and must preserve `@name` tokens, never raw `<Picture i>` tags.
   `Authorization: Bearer <key>` (widget value, else env `OPENROUTER_API_KEY`, else
   error), `Content-Type: application/json`. Body:
   `model`, `messages` (see below), `response_format: {"type": "json_object"}`,
-  `temperature: 0.8`, `reasoning: {"effort": "medium"}` (sent unconditionally;
-  OpenRouter drops it upstream for non-reasoning models). Connect timeout 10 s,
+  `temperature: 0.8`, `reasoning: {"effort": <enhancer_reasoning>}` (default
+  `low`; sent unconditionally — OpenRouter drops it upstream for non-reasoning
+  models). Connect timeout 10 s,
   read timeout 60 s; a timeout fails immediately with a clear error instead of
   retrying (a model that blew the budget will blow it again, and the user is
   waiting). The key must never appear in logs, error messages, or any

@@ -67,6 +67,11 @@ class H3RefToVideoPro(io.ComfyNode):
                     tooltip="Optional second model slug, tried when the main model "
                             "fails for good (timeout, provider error, unparseable "
                             "output). Empty disables the fallback."),
+                io.Combo.Input("enhancer_reasoning",
+                    options=["low", "medium", "high", "xhigh"], default="low",
+                    tooltip="Reasoning effort sent to OpenRouter (dropped upstream "
+                            "by models without reasoning support). Higher = better "
+                            "structure, slower and pricier."),
                 io.String.Input("openrouter_api_key", default="",
                     tooltip="Empty falls back to the OPENROUTER_API_KEY environment "
                             "variable. Never logged or cached by this pack — but "
@@ -143,8 +148,9 @@ class H3RefToVideoPro(io.ComfyNode):
     @classmethod
     def execute(cls, clip, vae, audio_vae, prompt, references, width, height, length,
                 ref_image_size, enhance_prompt, enhancer_model, enhancer_model_fallback,
-                openrouter_api_key, enhancer_vision, system_prompt_preset,
-                enhancer_seed, system_prompt_override=None) -> io.NodeOutput:
+                enhancer_reasoning, openrouter_api_key, enhancer_vision,
+                system_prompt_preset, enhancer_seed,
+                system_prompt_override=None) -> io.NodeOutput:
         ref_list = refs.parse_references(references)
         unknown = refs.unknown_mentions(prompt, ref_list)
         if unknown:
@@ -185,9 +191,9 @@ class H3RefToVideoPro(io.ComfyNode):
             started = time.monotonic()
             working_prompt = cls._enhance(
                 prompt, ref_list, payloads, durations, enhancer_model,
-                enhancer_model_fallback, openrouter_api_key, enhancer_vision,
-                system_prompt_preset, system_prompt_override, enhancer_seed,
-                target_duration)
+                enhancer_model_fallback, enhancer_reasoning, openrouter_api_key,
+                enhancer_vision, system_prompt_preset, system_prompt_override,
+                enhancer_seed, target_duration)
             logging.info("h3_tools: enhancer done in %.1fs",
                          time.monotonic() - started)
             pbar.update(1)
@@ -227,7 +233,7 @@ class H3RefToVideoPro(io.ComfyNode):
 
     @classmethod
     def _enhance(cls, prompt, ref_list, payloads, durations, model, fallback_model,
-                 api_key_widget, vision, preset, system_override, seed,
+                 reasoning, api_key_widget, vision, preset, system_override, seed,
                  target_duration):
         api_key = api_key_widget or os.environ.get("OPENROUTER_API_KEY", "")
         if not api_key:
@@ -257,7 +263,8 @@ class H3RefToVideoPro(io.ComfyNode):
         if fallback_model and fallback_model != model:
             models.append(fallback_model)
         keys = {m: enhancer.cache_key(prompt, ref_stats, m, system_prompt, vision,
-                                      seed, duration=target_duration)
+                                      seed, duration=target_duration,
+                                      reasoning=reasoning)
                 for m in models}
         cache_dir = os.path.join(folder_paths.get_user_directory(),
                                  "h3_tools", "enhancer_cache")
@@ -285,7 +292,7 @@ class H3RefToVideoPro(io.ComfyNode):
         used_model, result = enhancer.enhance_with_fallback(
             prompt, models=models, api_key=api_key, system_prompt=system_prompt,
             manifest=manifest, target_duration=target_duration,
-            vision_parts=vision_parts)
+            vision_parts=vision_parts, reasoning_effort=reasoning)
         clean, warnings = enhancer.sanitize_output(result, ref_list, prompt)
         for warning in warnings:
             logging.warning("h3_tools: %s", warning)

@@ -186,7 +186,7 @@ def test_enhance_success_first_try():
     assert call(post) == "rich"
     assert bodies[0]["response_format"] == {"type": "json_object"}
     assert bodies[0]["temperature"] == 0.8
-    assert bodies[0]["reasoning"] == {"effort": "medium"}
+    assert bodies[0]["reasoning"] == {"effort": "low"}  # default effort
     assert bodies[0]["messages"][0]["role"] == "system"
     assert timeouts[0] == (10, 60)  # fast connect failure, 60s read budget
 
@@ -300,6 +300,25 @@ def test_enhance_network_error_never_leaks_key():
     with pytest.raises(EnhancerError) as exc:
         call(post)
     assert "sk-secret-123" not in str(exc.value)
+
+
+def test_enhance_sends_chosen_reasoning_effort():
+    bodies = []
+
+    def post(url, headers=None, json=None, timeout=None):
+        bodies.append(json)
+        return FakeResp(200, '{"prompt_final": "ok"}')
+
+    call(post, reasoning_effort="xhigh")
+    assert bodies[0]["reasoning"] == {"effort": "xhigh"}
+
+
+def test_cache_key_sensitive_to_reasoning():
+    stats = [{"name": "a", "type": "image", "file": "a.png",
+              "mtime_ns": 1, "size": 2}]
+    base = enhancer.cache_key("p", stats, "m", "s", False, 0, reasoning="low")
+    assert enhancer.cache_key("p", stats, "m", "s", False, 0,
+                              reasoning="high") != base
 
 
 def test_enhance_sends_target_duration():
