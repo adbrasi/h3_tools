@@ -1,0 +1,294 @@
+/* h3_tools — reference board + mention editor (scoped by .h3tools- prefixes) */
+
+.h3tools-root {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--comfy-font, sans-serif);
+  font-size: 12px;
+  color: var(--input-text, #ddd);
+  padding: 4px 2px;
+  min-height: 240px;
+  box-sizing: border-box;
+}
+
+.h3tools-error {
+  background: #5b1f1f;
+  color: #ffb3b3;
+  border-radius: 4px;
+  padding: 4px 8px;
+  white-space: pre-wrap;
+}
+
+/* toolbar ---------------------------------------------------------------- */
+
+.h3tools-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.h3tools-toolbar button {
+  background: var(--comfy-input-bg, #262626);
+  color: var(--input-text, #ddd);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 4px;
+  padding: 3px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.h3tools-toolbar button:hover:not(:disabled) {
+  border-color: #4ea1ff;
+}
+
+.h3tools-toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.h3tools-counters {
+  margin-left: auto;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+/* tiles ------------------------------------------------------------------ */
+
+.h3tools-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 6px;
+}
+
+.h3tools-tile {
+  position: relative;
+  background: var(--comfy-input-bg, #262626);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 6px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.h3tools-thumb {
+  width: 100%;
+  height: 64px;
+  border-radius: 4px;
+  background: #111 center / cover no-repeat;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  cursor: default;
+  user-select: none;
+}
+
+.h3tools-tile[data-type="audio"] .h3tools-thumb {
+  cursor: pointer;
+}
+
+.h3tools-name {
+  font-weight: 600;
+  color: #4ea1ff;
+  cursor: text;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.h3tools-name input {
+  width: 100%;
+  box-sizing: border-box;
+  background: #111;
+  color: #4ea1ff;
+  border: 1px solid #4ea1ff;
+  border-radius: 3px;
+  font: inherit;
+  padding: 0 2px;
+}
+
+.h3tools-tagline {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.85;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.h3tools-badge {
+  background: #333;
+  border-radius: 3px;
+  padding: 0 4px;
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+}
+
+.h3tools-del {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #ffb3b3;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.h3tools-del:hover {
+  background: #5b1f1f;
+}
+
+.h3tools-snd {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #888;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.h3tools-snd.h3tools-snd-on {
+  color: #7ee787;
+  background: rgba(30, 70, 30, 0.8);
+}
+
+/* editor ----------------------------------------------------------------- */
+
+.h3tools-editor {
+  position: relative;
+  min-height: 90px;
+  flex: 1 1 auto;
+  display: flex;
+}
+
+.h3tools-editor .h3tools-highlight,
+.h3tools-editor textarea {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: 90px;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color, #444);
+  border-radius: 4px;
+  font-family: var(--comfy-font, sans-serif);
+  font-size: 12px;
+  line-height: 1.45;
+  letter-spacing: normal;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.h3tools-highlight {
+  position: absolute;
+  inset: 0;
+  background: var(--comfy-input-bg, #1c1c1c);
+  color: var(--input-text, #ddd);
+  pointer-events: none;
+  border-color: transparent;
+}
+
+.h3tools-editor textarea {
+  position: relative;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--input-text, #ddd);
+  resize: none;
+  outline: none;
+}
+
+.h3tools-editor textarea:focus {
+  border-color: #4ea1ff;
+}
+
+.h3tools-mention {
+  color: #4ea1ff;
+  font-weight: 600;
+}
+
+.h3tools-mention-unknown {
+  color: #ff6b6b;
+  font-weight: 600;
+}
+
+/* mention popup (lives on document.body) --------------------------------- */
+
+.h3tools-popup {
+  position: fixed;
+  z-index: 10000;
+  background: #1e1e1e;
+  border: 1px solid #4ea1ff;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 260px;
+  overflow-y: auto;
+  font-family: var(--comfy-font, sans-serif);
+  font-size: 12px;
+  color: #ddd;
+}
+
+.h3tools-popup-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.h3tools-popup-row.h3tools-popup-active {
+  background: #2b4a6b;
+}
+
+.h3tools-popup-thumb {
+  width: 48px;
+  height: 32px;
+  flex: none;
+  border-radius: 3px;
+  background: #111 center / cover no-repeat;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+
+.h3tools-popup-name {
+  font-weight: 600;
+  color: #4ea1ff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.h3tools-popup-tag {
+  margin-left: auto;
+  opacity: 0.7;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.h3tools-popup-empty {
+  padding: 6px 10px;
+  opacity: 0.6;
+}
