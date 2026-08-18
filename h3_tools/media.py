@@ -85,6 +85,66 @@ def middle_frame(frames):
     return frames[mid:mid + 1]
 
 
+def encode_video_context(video, max_edge=768, target_fps=10.0,
+                         max_seconds=30.0, max_bytes=20 * 1024 * 1024):
+    """VIDEO socket -> (data_url, full_duration, sent_duration) for the LLM.
+
+    mp4/h264 via the native writer (VideoFromComponents.save_to), audio
+    stripped, long side <= max_edge (dims snapped even for yuv420p), resampled
+    down to ~target_fps. Longer sources send only the LAST max_seconds —
+    continuation cares about the end. Duration is the only token-cost lever
+    (Gemini bills ~258 tokens/s regardless of resolution); size only affects
+    upload latency.
+    """
+    import base64
+    import io as _io
+    import logging
+
+    import comfy.utils
+    from comfy_api.latest import InputImpl, Types
+
+    components = video.get_components()
+    frames = components.images
+    fps = float(components.frame_rate)
+    n_src = int(frames.shape[0])
+    if n_src <= 0 or fps <= 0:
+        raise MediaError("could not read frames from the video to continue")
+    full_duration = n_src / fps
+    if full_duration > max_seconds:
+        keep = int(round(max_seconds * fps))
+        frames = frames[n_src - keep:]
+        logging.info("h3_tools: continuation video is %.1fs; sending only the "
+                     "last %.1fs to the LLM", full_duration, keep / fps)
+    sent_duration = int(frames.shape[0]) / fps
+    out_fps = min(target_fps, fps)
+    if out_fps < fps:
+        indices = resample_indices(int(frames.shape[0]), fps, out_fps)
+        if not indices:
+            raise MediaError("the video to continue is shorter than %.2fs — "
+                             "connect image_last_frame instead" % (1.0 / out_fps))
+        frames = frames[indices]
+    h, w = int(frames.shape[1]), int(frames.shape[2])
+    scale = min(1.0, max_edge / max(h, w))
+    new_w = max(2, int(w * scale) // 2 * 2)
+    new_h = max(2, int(h * scale) // 2 * 2)
+    if (new_w, new_h) != (w, h):
+        frames = comfy.utils.common_upscale(
+            frames.movedim(-1, 1), new_w, new_h, "bilinear", "disabled"
+        ).movedim(1, -1)
+    buf = _io.BytesIO()
+    InputImpl.VideoFromComponents(
+        Types.VideoComponents(images=frames, audio=None, frame_rate=out_fps)
+    ).save_to(buf)
+    blob = buf.getvalue()
+    if len(blob) > max_bytes:
+        raise MediaError(
+            "the video to continue is %.1f MB after re-encoding (limit %d MB) "
+            "— trim the source or connect image_last_frame instead"
+            % (len(blob) / 1e6, max_bytes // (1024 * 1024)))
+    url = "data:video/mp4;base64," + base64.b64encode(blob).decode("ascii")
+    return url, full_duration, sent_duration
+
+
 def image_data_url(image, max_edge=1024, quality=85):
     """IMAGE tensor -> JPEG data URL for the enhancer's vision parts."""
     import base64
