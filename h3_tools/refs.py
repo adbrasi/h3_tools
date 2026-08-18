@@ -17,8 +17,10 @@ MAX_IMAGES = 9
 MAX_VIDEOS = 3
 MAX_AUDIOS = 3
 
-# an @ not glued to a preceding word character, capturing the name as typed
-MENTION_RE = re.compile(r"(?<![A-Za-z0-9_])@([A-Za-z0-9_]{1,64})")
+# an @ not glued to a preceding word character, capturing the name as typed;
+# the trailing lookahead keeps >64-char tokens from partially matching (they
+# can never be valid names, so they stay plain text instead of mis-substituting)
+MENTION_RE = re.compile(r"(?<![A-Za-z0-9_])@([A-Za-z0-9_]{1,64})(?![A-Za-z0-9_])")
 NAME_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 NAME_MAX = 64
 
@@ -80,7 +82,7 @@ def parse_references(raw: str) -> list:
             raise RefError("references[%d]: use_soundtrack is only valid on videos" % i)
         name = item.get("name")
         if name is not None:
-            if not isinstance(name, str) or not NAME_RE.match(name):
+            if not isinstance(name, str) or not NAME_RE.fullmatch(name):
                 raise RefError(
                     "references[%d].name %r is invalid (must match ^[a-z0-9_]{1,64}$)"
                     % (i, name))
@@ -176,22 +178,52 @@ def build_final_prompt(text: str, refs: list) -> str:
 def strip_unknown_mentions(text: str, refs: list):
     """Sanitize LLM output: drop @tokens that match no reference.
 
-    Returns (clean_text, removed_tokens). Runs of spaces left by a removal are
-    collapsed — the text is LLM output, not user formatting.
+    Returns (clean_text, removed_tokens). Spacing is tidied only around each
+    removal — the rest of the text (indentation, blank lines) is untouched.
     """
     known = {r.name for r in refs}
     removed = []
-
-    def repl(m):
+    out = []
+    last = 0
+    for m in MENTION_RE.finditer(text):
         if m.group(1).lower() in known:
-            return m.group(0)
+            continue
         removed.append(m.group(0))
-        return ""
+        start, end = m.start(), m.end()
+        prev = text[last:start]
+        if (end < len(text) and text[end] == " "
+                and (start == 0 or text[start - 1] in " \t\n")):
+            end += 1  # "a @ghost b" -> "a b", "@ghost x" -> "x"
+        elif prev.endswith(" "):
+            prev = prev[:-1]  # "word @ghost, x" -> "word, x"
+        out.append(prev)
+        last = end
+    out.append(text[last:])
+    return "".join(out), removed
 
-    out = MENTION_RE.sub(repl, text)
-    if removed:
-        out = re.sub(r"[ \t]{2,}", " ", out)
-    return out, removed
+
+def autogrow_slots(refs: list) -> list:
+    """(name, group, key) triplets following the native prefix+index convention.
+
+    A use_soundtrack video contributes a ref_video_audios slot with the SAME
+    trailing index as its ref_videos slot — that index pairing is how the
+    native node matches a soundtrack to its video.
+    """
+    slots = []
+    image_i = video_i = audio_i = 0
+    for r in refs:
+        if r.type == "image":
+            slots.append((r.name, "ref_images", "ref_image_%d" % image_i))
+            image_i += 1
+        elif r.type == "video":
+            slots.append((r.name, "ref_videos", "ref_video_%d" % video_i))
+            if r.use_soundtrack:
+                slots.append((r.name, "ref_video_audios", "ref_video_audio_%d" % video_i))
+            video_i += 1
+        else:
+            slots.append((r.name, "ref_audios", "ref_audio_%d" % audio_i))
+            audio_i += 1
+    return slots
 
 
 def unmentioned_refs(text: str, refs: list) -> list:

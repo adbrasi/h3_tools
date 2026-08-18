@@ -33,7 +33,7 @@ def test_derive_name_multi_dot_keeps_full_stem():
 
 
 def test_derive_name_truncates_to_64():
-    assert len(refs.derive_name("x" * 200 + ".png")) == 64
+    assert refs.derive_name("x" * 200 + ".png") == "x" * 64
 
 
 # ---- parse_references ---------------------------------------------------
@@ -85,6 +85,23 @@ def test_parse_rejects_over_image_cap():
     items = [{"type": "image", "file": "i%d.png" % i} for i in range(10)]
     with pytest.raises(RefError, match="at most 9"):
         make(items)
+
+
+def test_parse_rejects_over_video_cap():
+    items = [{"type": "video", "file": "v%d.mp4" % i} for i in range(4)]
+    with pytest.raises(RefError, match="at most 3"):
+        make(items)
+
+
+def test_parse_rejects_over_audio_cap():
+    items = [{"type": "audio", "file": "a%d.wav" % i} for i in range(4)]
+    with pytest.raises(RefError, match="at most 3"):
+        make(items)
+
+
+def test_parse_rejects_name_with_trailing_newline():
+    with pytest.raises(RefError, match="invalid"):
+        make([{"name": "garota\n", "type": "image", "file": "a.png"}])
 
 
 def test_parse_rejects_soundtrack_on_image():
@@ -168,6 +185,15 @@ def test_substitute_leaves_unknown_and_literal_tags():
         "use <Picture 1> com <Picture 1> e @ghost"
 
 
+def test_overlong_mention_is_plain_text():
+    # a >64-char token can never be a valid name; it must not partially match
+    got = make([{"name": "a" * 64, "type": "image", "file": "a.png"}])
+    text = "@" + "a" * 70
+    assert refs.find_mentions(text) == []
+    assert refs.unknown_mentions(text, got) == []
+    assert refs.substitute_mentions(text, got) == text
+
+
 # ---- provenance + final prompt -----------------------------------------
 
 def test_provenance_lines():
@@ -208,6 +234,47 @@ def test_strip_unknown_keeps_clean_text_intact():
     out, removed = refs.strip_unknown_mentions("só a @garota aqui", got)
     assert out == "só a @garota aqui"
     assert removed == []
+
+
+def test_strip_unknown_preserves_indentation():
+    got = make([{"type": "image", "file": "garota.png"}])
+    text = "line1\n    indented text\nsee @ghost and @garota"
+    out, removed = refs.strip_unknown_mentions(text, got)
+    assert out == "line1\n    indented text\nsee and @garota"
+    assert removed == ["@ghost"]
+
+
+def test_strip_unknown_at_start():
+    got = make([{"type": "image", "file": "garota.png"}])
+    out, _ = refs.strip_unknown_mentions("@ghost starts here", got)
+    assert out == "starts here"
+
+
+def test_strip_unknown_before_punctuation():
+    got = make([{"type": "image", "file": "garota.png"}])
+    out, _ = refs.strip_unknown_mentions("word @ghost, punct", got)
+    assert out == "word, punct"
+
+
+# ---- native Autogrow slot pairing ---------------------------------------
+
+def test_autogrow_slots_pairing():
+    got = make([
+        {"type": "video", "file": "v1.mp4"},
+        {"type": "image", "file": "a.png"},
+        {"type": "video", "file": "v2.mp4", "use_soundtrack": True},
+        {"type": "audio", "file": "x.wav"},
+        {"type": "video", "file": "v3.mp4", "use_soundtrack": True},
+    ])
+    assert refs.autogrow_slots(got) == [
+        ("v1", "ref_videos", "ref_video_0"),
+        ("a", "ref_images", "ref_image_0"),
+        ("v2", "ref_videos", "ref_video_1"),
+        ("v2", "ref_video_audios", "ref_video_audio_1"),
+        ("x", "ref_audios", "ref_audio_0"),
+        ("v3", "ref_videos", "ref_video_2"),
+        ("v3", "ref_video_audios", "ref_video_audio_2"),
+    ]
 
 
 def test_unmentioned_refs():

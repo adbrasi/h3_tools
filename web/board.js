@@ -12,7 +12,7 @@ const NODE_ID = "H3RefToVideoPro";
 const SUBFOLDER = "h3_refs";
 const CAPS = { image: 9, video: 3, audio: 3 };
 const NAME_RE = /^[a-z0-9_]{1,64}$/;
-const MENTION_RE = /(?<![A-Za-z0-9_])@([A-Za-z0-9_]{1,64})/g;
+const MENTION_RE = /(?<![A-Za-z0-9_])@([A-Za-z0-9_]{1,64})(?![A-Za-z0-9_])/g;
 const TRIGGER_RE = /(?<![A-Za-z0-9_])@([A-Za-z0-9_]*)$/;
 const TYPE_ICONS = { image: "\u{1F5BC}", video: "\u{1F3AC}", audio: "♪" };
 const TYPE_LABELS = { image: "Imagem", video: "Vídeo", audio: "Áudio" };
@@ -34,6 +34,23 @@ function escapeHtml(text) {
   return text.replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   }[c]));
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// replace [start, end) with text, keeping the browser's native undo stack alive
+function replaceRange(textarea, start, end, text) {
+  textarea.focus();
+  textarea.setSelectionRange(start, end);
+  let ok = false;
+  try {
+    ok = document.execCommand("insertText", false, text);
+  } catch (e) {
+    ok = false;
+  }
+  if (!ok) textarea.setRangeText(text, start, end, "end");
 }
 
 // mirrors refs.derive_name in the backend (drift only mislabels, backend rules)
@@ -95,7 +112,10 @@ function videoThumb(file) {
     video.muted = true;
     video.preload = "metadata";
     video.crossOrigin = "anonymous";
-    const fail = () => resolve(null);
+    const fail = () => {
+      videoThumbCache.delete(file); // allow a retry on the next render
+      resolve(null);
+    };
     video.onerror = fail;
     video.onloadedmetadata = () => {
       video.currentTime = Math.min(1, (video.duration || 0) / 2);
@@ -123,8 +143,9 @@ function videoThumb(file) {
 const sharedAudio = new Audio();
 let sharedAudioFile = null;
 function toggleAudio(file) {
-  if (sharedAudioFile === file && !sharedAudio.paused) {
-    sharedAudio.pause();
+  if (sharedAudioFile === file) {
+    if (sharedAudio.paused) sharedAudio.play().catch(() => {});
+    else sharedAudio.pause();
     return;
   }
   sharedAudioFile = file;
@@ -132,11 +153,22 @@ function toggleAudio(file) {
   sharedAudio.play().catch(() => {});
 }
 
+function stopAudio(file) {
+  if (file === undefined || sharedAudioFile === file) {
+    sharedAudio.pause();
+    sharedAudioFile = null;
+    sharedAudio.removeAttribute("src");
+  }
+}
+
 function setThumb(el, ref) {
   el.textContent = "";
   el.style.backgroundImage = "";
   if (ref.type === "image") {
-    el.style.backgroundImage = `url("${viewURL(ref.file)}")`;
+    const probe = new Image();
+    probe.onload = () => { el.style.backgroundImage = `url("${viewURL(ref.file)}")`; };
+    probe.onerror = () => { el.textContent = TYPE_ICONS.image; };
+    probe.src = viewURL(ref.file);
   } else if (ref.type === "video") {
     el.textContent = TYPE_ICONS.video;
     videoThumb(ref.file).then((url) => {
@@ -169,10 +201,14 @@ function caretPosition(textarea) {
   marker.textContent = "​";
   div.appendChild(marker);
   document.body.appendChild(div);
+  // the node's DOM container is transform-scaled with the canvas, so the
+  // rect is in scaled viewport px while offsets/scroll are unscaled CSS px
+  const scale = app.canvas?.ds?.scale ?? 1;
   const rect = textarea.getBoundingClientRect();
-  const top = rect.top + marker.offsetTop - textarea.scrollTop;
-  const left = rect.left + marker.offsetLeft - textarea.scrollLeft;
-  const lineHeight = marker.offsetHeight || parseFloat(style.lineHeight) || 16;
+  const top = rect.top + (marker.offsetTop - textarea.scrollTop) * scale;
+  const left = rect.left + (marker.offsetLeft - textarea.scrollLeft) * scale;
+  const lineHeight =
+    (marker.offsetHeight || parseFloat(style.lineHeight) || 16) * scale;
   div.remove();
   return { top, left, lineHeight };
 }
@@ -228,6 +264,7 @@ function renderPopupRows() {
     });
     el.appendChild(row);
   });
+  el.children[index]?.scrollIntoView({ block: "nearest" });
 }
 
 function openPopup(textarea, items, insert) {
@@ -357,7 +394,13 @@ function setupNode(node) {
   function render() {
     const list = readRefs();
     grid.textContent = "";
-    if (!list) return;
+    if (!list) {
+      // still paint the prompt (the textarea text is transparent — the
+      // overlay is what the user reads) and keep the counters honest
+      counters.textContent = "references inválido";
+      renderOverlay();
+      return;
+    }
     const names = effectiveNames(list);
     const tags = computeTags(list);
     const counts = { image: 0, video: 0, audio: 0 };
@@ -408,6 +451,7 @@ function setupNode(node) {
     del.textContent = "✕";
     del.title = "remover referência";
     del.addEventListener("click", () => {
+      if (ref.type === "audio") stopAudio(ref.file);
       list.splice(index, 1);
       writeRefs(list);
     });
@@ -439,25 +483,37 @@ function setupNode(node) {
     input.focus();
     input.select();
     let done = false;
+    const restore = () => { nameEl.textContent = "@" + currentName; };
     const commit = () => {
       if (done) return;
       done = true;
       const value = input.value.trim();
-      if (value && value !== currentName) {
-        const others = new Set(effectiveNames(list));
-        others.delete(currentName);
-        if (!NAME_RE.test(value)) {
-          showError(`nome inválido "${value}" — use ^[a-z0-9_]{1,64}$`);
-        } else if (others.has(value)) {
-          showError(`nome "${value}" já existe`);
-        } else {
-          ref.name = value;
-          // keep existing mentions working: rewrite @old -> @new in the prompt
-          const re = new RegExp(
-            `(?<![A-Za-z0-9_])@${currentName}(?![A-Za-z0-9_])`, "gi");
-          textarea.value = textarea.value.replace(re, "@" + value);
-          syncPrompt();
-        }
+      // no rebuild on a no-op: a rebuild would detach whatever the user is
+      // mousedown-ing on and swallow that click
+      if (!value || value === currentName) { restore(); return; }
+      const others = new Set(effectiveNames(list));
+      others.delete(currentName);
+      if (!NAME_RE.test(value)) {
+        showError(`nome inválido "${value}" — use ^[a-z0-9_]{1,64}$`);
+        restore();
+        return;
+      }
+      if (others.has(value)) {
+        showError(`nome "${value}" já existe`);
+        restore();
+        return;
+      }
+      // freeze derived names first so freeing this name can't retarget one
+      const names = effectiveNames(list);
+      list.forEach((r, i) => { if (!r.name) r.name = names[i]; });
+      ref.name = value;
+      // keep existing mentions working: rewrite @old -> @new in the prompt
+      const re = new RegExp(
+        `(?<![A-Za-z0-9_])@${escapeRegExp(currentName)}(?![A-Za-z0-9_])`, "gi");
+      const rewritten = textarea.value.replace(re, "@" + value);
+      if (rewritten !== textarea.value) {
+        replaceRange(textarea, 0, textarea.value.length, rewritten);
+        syncPrompt();
       }
       writeRefs(list);
     };
@@ -465,7 +521,6 @@ function setupNode(node) {
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); input.blur(); }
       if (e.key === "Escape") { done = true; render(); }
-      e.stopPropagation();
     });
   }
 
@@ -488,11 +543,10 @@ function setupNode(node) {
   toolbar.appendChild(counters);
 
   async function addFiles(type, files) {
-    const list = readRefs();
-    if (!list) return;
     for (const file of files) {
-      const count = list.filter((r) => r.type === type).length;
-      if (count >= CAPS[type]) {
+      let list = readRefs();
+      if (!list) return;
+      if (list.filter((r) => r.type === type).length >= CAPS[type]) {
         showError(`limite de ${CAPS[type]} referências de tipo ${type} atingido`);
         break;
       }
@@ -504,6 +558,9 @@ function setupNode(node) {
         const resp = await api.fetchApi("/upload/image", { method: "POST", body });
         if (resp.status !== 200) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
+        // re-read: the board may have changed while the upload was in flight
+        list = readRefs();
+        if (!list) return;
         const taken = new Set(effectiveNames(list));
         const base = deriveName(data.name);
         let name = base;
@@ -512,11 +569,11 @@ function setupNode(node) {
           name = base.slice(0, 64 - suffix.length) + suffix;
         }
         list.push({ name, type, file: `${SUBFOLDER}/${data.name}` });
+        writeRefs(list);
       } catch (e) {
         showError(`upload de "${file.name}" falhou: ${e.message || e}`);
       }
     }
-    writeRefs(list);
   }
 
   // ---- mention popup wiring
@@ -536,13 +593,13 @@ function setupNode(node) {
     const match = TRIGGER_RE.exec(upto);
     if (!match) { closePopup(); return; }
     const start = upto.length - match[0].length;
-    const after = textarea.value.slice(textarea.selectionStart);
-    textarea.value = textarea.value.slice(0, start) + "@" + name + " " + after;
-    const caret = start + name.length + 2;
-    textarea.setSelectionRange(caret, caret);
+    // consume the word chars right of the caret too (caret mid-token)
+    const rest = textarea.value.slice(textarea.selectionStart);
+    const rightLen = (/^[A-Za-z0-9_]*/.exec(rest) || [""])[0].length;
+    const end = textarea.selectionStart + rightLen;
     closePopup();
+    replaceRange(textarea, start, end, "@" + name + " ");
     syncPrompt();
-    textarea.focus();
   }
 
   function maybePopup() {
@@ -560,7 +617,9 @@ function setupNode(node) {
   textarea.addEventListener("click", maybePopup);
   textarea.addEventListener("blur", closePopup);
   textarea.addEventListener("keydown", (e) => {
-    e.stopPropagation(); // keep litegraph shortcuts away from typing
+    // no stopPropagation: ComfyUI's keybinding service already ignores plain
+    // keys in textareas, and stopping it would kill Ctrl+Enter (queue) etc.
+    if (e.isComposing) return; // let the IME own Enter/arrows mid-composition
     if (!popup) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
@@ -588,7 +647,9 @@ function setupNode(node) {
   // ---- attach as a DOM widget (kept LAST so widgets_values stays aligned
   // for workflows loaded without this extension)
   const boardWidget = node.addDOMWidget("h3_board", "div", root, { serialize: false });
-  if (boardWidget) boardWidget.serializeValue = () => undefined;
+  // options.serialize=false excludes it from the API prompt; the top-level
+  // flag is what LGraphNode.serialize checks for workflow persistence
+  if (boardWidget) boardWidget.serialize = false;
 
   node.__h3refresh = () => {
     textarea.value = promptWidget.value ?? "";
@@ -596,6 +657,7 @@ function setupNode(node) {
   };
   node.__h3cleanup = () => {
     closePopup();
+    stopAudio();
     clearTimeout(errorTimer);
   };
 
