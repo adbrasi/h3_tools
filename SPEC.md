@@ -117,7 +117,8 @@ transport inputs, no state in `node.properties`**):
 | `enhancer_model` | String | `"google/gemini-3-flash-preview"` | free text, OpenRouter model slug. NEVER a combo validated against a live API (breaks offline/headless validation) |
 | `openrouter_api_key` | String | `""` | empty → fall back to env `OPENROUTER_API_KEY`; missing both (with enhancer on) is an execution error |
 | `enhancer_vision` | Boolean | `false` | send reference images (and 1 frame per video) to the LLM |
-| `system_prompt_override` | String, multiline | `""` | non-empty replaces the built-in system prompt verbatim |
+| `system_prompt_preset` | Combo (keys of `SYSTEM_PROMPTS`) | `default` | built-in system prompt presets synthesized from the official H3 guide (`h3_tools/system_prompts.py`): `default`, `multishot`, `single_take`, `dialogue`, `music_video` |
+| `system_prompt_override` | STRING **connection** (`force_input`), optional | — | a connected non-empty string replaces the chosen preset verbatim |
 | `enhancer_seed` | Int | 0 | part of the enhancer cache key; bump to re-roll the LLM |
 
 All enhancer widgets are plain optional widgets — no dynamic show/hide of widget rows
@@ -274,10 +275,13 @@ LLM reads and must preserve `@name` tokens, never raw `<Picture i>` tags.
   2. if `enhancer_vision`: for each image ref, a text part `@name (image):` followed by
      an `image_url` part (data URL, JPEG q85, long edge ≤ 1024); for each video ref,
      the same with one frame sampled from the middle of the clip. Audio is never sent.
-- **Built-in system prompt**: the exact default text is Appendix A. Contract it
-  implements: rewrite the draft into a rich, cinematic, temporally-structured prompt;
-  preserve every `@name` token spelled identically; never invent `@` tokens; never
-  describe media content not shown; output only `{"prompt_final": "..."}`.
+- **Built-in system prompts**: preset per `system_prompt_preset`, defined in
+  `h3_tools/system_prompts.py` (synthesized from the official MiniMax guide,
+  `guide.md`). Contract every preset implements: rewrite the draft into the H3
+  six-section full-reference format; preserve every `@name` token spelled
+  identically; never invent `@` tokens; never describe media content not shown;
+  fit all timestamps inside the provided "Target video duration: X.Xs" line;
+  output only `{"prompt_final": "..."}`.
 - **Response parsing**: strip code fences if present → first balanced `{...}` →
   `json.loads` → `prompt_final` must be a non-empty string.
 - **Retry/error policy**: up to 3 total attempts. Network / 429 / 5xx failures
@@ -495,7 +499,10 @@ shared across node instances; plaintext API keys served by unauthenticated GET r
 `IS_CHANGED = NaN` re-running the LLM every execution; silent `""` substitution of
 stale mentions. Every one of these has a corresponding positive decision above.
 
-## Appendix A — default enhancer system prompt (verbatim)
+## Appendix A — original default enhancer system prompt (superseded)
+
+> Superseded in v1.1: the live prompts are the guide-derived presets in
+> `h3_tools/system_prompts.py` (source of truth). Kept for history only.
 
 ```
 You are an expert prompt writer for MiniMax H3, a reference-to-video model that

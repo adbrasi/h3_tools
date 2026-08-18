@@ -1,6 +1,6 @@
 [project]
 name = "h3_tools"
-version = "1.0.0"
+version = "1.1.0"
 description = "MiniMax H3 Reference to Video (Pro): media board, @name mentions and an optional OpenRouter prompt enhancer, delegating all encoding to the native H3 node."
 license = { text = "MIT" }
 dependencies = ["requests"]
