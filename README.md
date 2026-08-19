@@ -90,6 +90,30 @@ Each reference is `{"name"?, "type": "image"|"video"|"audio", "file",
 (`Garota Linda.png` → `@garota_linda`). Order within a type defines the
 native ordinals. Caps: 9 images, 3 videos, 3 standalone audios.
 
+## Modal API client nodes
+
+Six nodes that run generation on the modal_inferencito API instead of the
+local GPU — use them on any ComfyUI, including CPU-only frontends (this pack
+loads them even when the ComfyUI has no MiniMax H3 support; only the local
+Pro nodes need it).
+
+- **Prepare Reference / Prepare Reference Continue**: media board +
+  `@mentions` + the same OpenRouter enhancer as the Pro nodes, running
+  LOCALLY (media is sent to the LLM from your machine, not from the server).
+  Output feeds the matching Generate node.
+- **Generate Reference / Reference Continue / First-Last Frame / First-Last
+  Continue**: upload media, submit, poll with live progress + animated
+  preview, return the produced VIDEO (saved under `output/h3_api/`) plus the
+  exact `final_prompt` the server encoded and a cost line.
+- First/Last nodes take a ready prompt STRING — no enhancer, no mentions;
+  with neither frame connected they are text-to-video, and the Continue
+  variants never need frames (the source video provides the pixels).
+- Connection: set `accounts_json` to your modal_inferencito `accounts.json`
+  (or export `H3_MODAL_ACCOUNTS_JSON`), or fill `api_url` + `api_key`.
+  From Windows, the WSL path works:
+  `\\wsl.localhost\Debian\home\adolfocesar\projects\modal_inferencito\accounts.json`.
+- Quality tiers: `fast` (turbo lora, 8 steps), `normal` (20), `quality` (32).
+
 ## Enhancer
 
 Set `enhance_prompt` and either fill `openrouter_api_key` or export

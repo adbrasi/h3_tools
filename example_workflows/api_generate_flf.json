@@ -1,0 +1,35 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "example.png"
+    }
+  },
+  "2": {
+    "class_type": "H3ApiGenerateFlf",
+    "inputs": {
+      "prompt": "ela sorri para a camera",
+      "first_frame": ["1", 0],
+      "duration_s": 4.0,
+      "size_mode": "aspect",
+      "aspect": "16:9",
+      "megapixels": 0.5,
+      "accounts_json": "",
+      "api_url": "",
+      "api_key": "",
+      "account": "auto",
+      "quality": "fast",
+      "seed": 0,
+      "timeout_min": 30
+    }
+  },
+  "3": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": ["2", 0],
+      "filename_prefix": "video/h3_api_flf",
+      "format": "auto",
+      "codec": "auto"
+    }
+  }
+}
