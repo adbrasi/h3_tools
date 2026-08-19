@@ -79,7 +79,7 @@ v3 io schema (same as node.py), pytest for the pure modules.
 - A "payload" (prepare→generate socket value) is
   `{"mode": str, "body": dict, "uploads": [{"name": str, "path": str}], "preview_prompt": str}`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_api_payload.py
@@ -149,12 +149,12 @@ def test_extend_extra():
         ap.extend_extra(0, "prev.mp4")
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /mnt/d/Comfyui/comfyOficial/custom_nodes/h3_tools && python3 -m pytest tests/test_api_payload.py -q`
 Expected: FAIL with `ModuleNotFoundError: No module named 'h3_tools.api_payload'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```python
 # h3_tools/api_payload.py
@@ -231,12 +231,12 @@ def extend_extra(context_seconds, source_name):
             "context_seconds": float(context_seconds)}
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m pytest tests/test_api_payload.py -q`
 Expected: all PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git -C /mnt/d/Comfyui/comfyOficial/custom_nodes/h3_tools add h3_tools/api_payload.py tests/test_api_payload.py
@@ -266,7 +266,7 @@ git -C /mnt/d/Comfyui/comfyOficial/custom_nodes/h3_tools commit -m "api: builder
     `WorkflowFailed(ModalApiError)` — server-side ComfyUI error, NOT retried
     on other accounts (it would reproduce, burning credits).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_modal_client.py
@@ -417,12 +417,12 @@ def test_generate_interrupt_stops_polling():
                     sleep=lambda s: None, clock=iter(range(100)).__next__)
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python3 -m pytest tests/test_modal_client.py -q`
 Expected: FAIL with `ModuleNotFoundError: No module named 'h3_tools.modal_client'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```python
 # h3_tools/modal_client.py
@@ -560,12 +560,12 @@ def generate(cfg, body, files, *, timeout_s, account="auto", progress=None,
         errors or ["(no accounts configured)"]))
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m pytest tests/test_modal_client.py tests/test_api_payload.py -q`
 Expected: all PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git -C /mnt/d/Comfyui/comfyOficial/custom_nodes/h3_tools add h3_tools/modal_client.py tests/test_modal_client.py
@@ -593,7 +593,7 @@ git -C /mnt/d/Comfyui/comfyOficial/custom_nodes/h3_tools commit -m "api: cliente
   `enhancer_flow._unknown_mentions_message(unknown, ref_list)`.
   All FIVE move VERBATIM (bodies unchanged) from node.py.
 
-- [ ] **Step 1: Create `h3_tools/enhancer_flow.py`**
+- [x] **Step 1: Create `h3_tools/enhancer_flow.py`**
 
 Header + the five helpers cut verbatim from node.py (`_unknown_mentions_message`,
 `_decode_refs`, `_reference_vision_parts`, `_run_enhancer`, `_enhancer_inputs`),
@@ -620,7 +620,7 @@ from . import continuation, enhancer, media, refs
 # ... the five functions, bodies byte-identical to node.py ...
 ```
 
-- [ ] **Step 2: Replace the definitions in `node.py` with the import**
+- [x] **Step 2: Replace the definitions in `node.py` with the import**
 
 Delete the five function definitions from node.py and add to its imports:
 
@@ -630,7 +630,7 @@ from .enhancer_flow import (_decode_refs, _enhancer_inputs,
                             _unknown_mentions_message)
 ```
 
-- [ ] **Step 3: Make `__init__.py` degrade softly and register API nodes**
+- [x] **Step 3: Make `__init__.py` degrade softly and register API nodes**
 
 ```python
 """h3_tools — MiniMax H3 Reference to Video (Pro) + Modal API client nodes."""
@@ -667,19 +667,19 @@ async def comfy_entrypoint() -> H3ToolsExtension:
 (`API_NODES` will not exist until Task 4 — create a placeholder
 `h3_tools/api_nodes.py` with `API_NODES = []` in this task so the pack loads.)
 
-- [ ] **Step 4: Add the prepare ids to `web/board.js` line 11**
+- [x] **Step 4: Add the prepare ids to `web/board.js` line 11**
 
 ```javascript
 const NODE_IDS = new Set(["H3RefToVideoPro", "H3RefToVideoContinuePro",
                           "H3ApiPrepareRef", "H3ApiPrepareRefContinue"]);
 ```
 
-- [ ] **Step 5: Run the full existing suite**
+- [x] **Step 5: Run the full existing suite**
 
 Run: `python3 -m pytest tests/ -q`
 Expected: all PASS (the pure modules never import node.py, but this guards the refactor).
 
-- [ ] **Step 6: Import-smoke node.py on the GPU-style install (has minimax) via grep sanity**
+- [x] **Step 6: Import-smoke node.py on the GPU-style install (has minimax) via grep sanity**
 
 node.py cannot be imported outside ComfyUI. Instead verify the refactor is
 textually complete:
@@ -687,7 +687,7 @@ textually complete:
 Run: `grep -c "def _run_enhancer\|def _decode_refs\|def _reference_vision_parts\|def _enhancer_inputs\|def _unknown_mentions_message" h3_tools/node.py h3_tools/enhancer_flow.py`
 Expected: `h3_tools/node.py:0` and `h3_tools/enhancer_flow.py:5`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git -C /mnt/d/Comfyui/comfyOficial/custom_nodes/h3_tools add -A
@@ -709,7 +709,7 @@ git -C /mnt/d/Comfyui/comfyOficial/custom_nodes/h3_tools commit -m "refactor: he
 - Produces: `API_NODES` list with the 6 io.ComfyNode classes; payload dicts per
   Task 1's shape flowing over `io.Custom("H3_API_PAYLOAD")` sockets.
 
-- [ ] **Step 1: Write the module skeleton with shared helpers**
+- [x] **Step 1: Write the module skeleton with shared helpers**
 
 ```python
 # h3_tools/api_nodes.py
@@ -856,7 +856,7 @@ def _run_remote(body, uploads, *, accounts_json, api_url, api_key, account,
     return InputImpl.VideoFromFile(out_path), final_prompt, info
 ```
 
-- [ ] **Step 2: Write the two prepare nodes**
+- [x] **Step 2: Write the two prepare nodes**
 
 ```python
 class H3ApiPrepareRef(io.ComfyNode):
@@ -979,7 +979,7 @@ class H3ApiPrepareRef(io.ComfyNode):
                    "preview_prompt": preview, "source_name": vid_name}
 ```
 
-- [ ] **Step 3: Write the four generate nodes**
+- [x] **Step 3: Write the four generate nodes**
 
 ```python
 class H3ApiGenerateRef(io.ComfyNode):
@@ -1094,12 +1094,12 @@ API_NODES = [H3ApiPrepareRef, H3ApiPrepareRefContinue, H3ApiGenerateRef,
              H3ApiGenerateFlfContinue]
 ```
 
-- [ ] **Step 4: Regression + syntax check**
+- [x] **Step 4: Regression + syntax check**
 
 Run: `python3 -m pytest tests/ -q && python3 -m py_compile h3_tools/api_nodes.py h3_tools/enhancer_flow.py && echo SYNTAX-OK`
 Expected: tests PASS, `SYNTAX-OK`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git -C /mnt/d/Comfyui/comfyOficial/custom_nodes/h3_tools add h3_tools/api_nodes.py
@@ -1117,7 +1117,7 @@ git -C /mnt/d/Comfyui/comfyOficial/custom_nodes/h3_tools commit -m "api: 6 nodes
 - Consumes: `api_payload`, `modal_client` (Tasks 1–2), the deployed API, and
   the WSL accounts file `/home/adolfocesar/projects/modal_inferencito/accounts.json`.
 
-- [ ] **Step 1: Write the driver**
+- [x] **Step 1: Write the driver**
 
 ```python
 #!/usr/bin/env python3
@@ -1202,19 +1202,19 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 2: Run the dry-run**
+- [x] **Step 2: Run the dry-run**
 
 Run: `python3 scripts/e2e_api.py --dry-run`
 Expected: 4 lines ending in `ok`
 
-- [ ] **Step 3: Run the real job**
+- [x] **Step 3: Run the real job**
 
 Run: `python3 scripts/e2e_api.py`
 Expected: progress lines, then `ok: /tmp/e2e_api_flf.mp4 ...`; verify with
 `ffprobe -v error -show_entries stream=codec_type -of csv=p=0 /tmp/e2e_api_flf.mp4`
 showing `video` and `audio` streams.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git -C /mnt/d/Comfyui/comfyOficial/custom_nodes/h3_tools add scripts/e2e_api.py
@@ -1229,7 +1229,7 @@ git -C /mnt/d/Comfyui/comfyOficial/custom_nodes/h3_tools commit -m "api: driver 
 - Modify: `README.md` (new section after "Headless / API usage")
 - Create: `example_workflows/api_generate_flf.json`
 
-- [ ] **Step 1: README section**
+- [x] **Step 1: README section**
 
 Add (verbatim, adjusting nothing else):
 
@@ -1259,7 +1259,7 @@ Pro nodes need it).
 - Quality tiers: `fast` (turbo lora, 8 steps), `normal` (20), `quality` (32).
 ```
 
-- [ ] **Step 2: Example workflow JSON**
+- [x] **Step 2: Example workflow JSON**
 
 `example_workflows/api_generate_flf.json` — a 3-node API-format graph:
 `LoadImage` → `H3ApiGenerateFlf` (prompt widget text "ela sorri para a camera",
@@ -1267,14 +1267,14 @@ duration 4, quality fast) → `SaveVideo`. Build it by hand mirroring the node
 schemas (widgets in schema order), validate with
 `python3 -c "import json; json.load(open('example_workflows/api_generate_flf.json'))"`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git -C /mnt/d/Comfyui/comfyOficial/custom_nodes/h3_tools add README.md example_workflows/
 git -C /mnt/d/Comfyui/comfyOficial/custom_nodes/h3_tools commit -m "docs: nodes cliente da API Modal + workflow de exemplo"
 ```
 
-- [ ] **Step 4: User acceptance (manual, blocking)**
+- [x] **Step 4: User acceptance (manual, blocking)**
 
 Ask the user to restart their local ComfyUI (D:), confirm the 6 nodes appear
 under `api/minimax`, run the example workflow, and test a Prepare Reference →
