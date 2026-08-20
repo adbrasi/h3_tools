@@ -579,7 +579,7 @@ class H3ApiGenerateFlfContinue(io.ComfyNode):
         taken = set()
         vid_name, vid_path = _video_source_path(video, taken)
         body = {"mode": "flf_extend", "prompt": prompt,
-                "duration_s": float(duration_s), "enhance": False}
+                "duration_s": float(duration_s)}
         video_out, final_prompt, info = _run_remote(
             body, [{"name": vid_name, "path": vid_path}],
             accounts_json=accounts_json, api_url=api_url, api_key=api_key,

@@ -44,7 +44,6 @@ def ref_body(*, prompt, references, duration_s, duration_mode=None):
         "prompt": prompt,
         "references": list(references),
         "duration_s": float(duration_s),
-        "enhance": False,
     }
     if duration_mode is not None:
         body["duration_mode"] = duration_mode
@@ -53,10 +52,16 @@ def ref_body(*, prompt, references, duration_s, duration_mode=None):
 
 def flf_body(*, prompt, duration_s, first_name=None, last_name=None,
              size_mode="aspect"):
+    """No frames at all is text-to-video: the server's strict per-mode
+    whitelists (API.md) demand the explicit t2v mode (and reject size_mode
+    there — t2v sizes by aspect only)."""
     if size_mode == "source" and not first_name:
         raise ApiPayloadError("size_mode 'source' needs a first frame image")
+    if not first_name and not last_name:
+        return {"mode": "t2v", "prompt": prompt,
+                "duration_s": float(duration_s)}
     body = {"mode": "flf", "prompt": prompt, "duration_s": float(duration_s),
-            "enhance": False, "size_mode": size_mode}
+            "size_mode": size_mode}
     if first_name:
         body["first_image"] = first_name
     if last_name:

@@ -31,7 +31,7 @@ def test_ref_body_shape():
     assert body == {
         "mode": "ref", "prompt": "a @garota dança",
         "references": [{"name": "garota", "type": "image", "file": "garota.png"}],
-        "duration_s": 8.0, "enhance": False,
+        "duration_s": 8.0,
     }
 
 
@@ -44,8 +44,7 @@ def test_ref_body_continue_adds_mode_and_duration_mode():
 
 def test_flf_body_variants():
     t2v = ap.flf_body(prompt="p", duration_s=6)
-    assert t2v == {"mode": "flf", "prompt": "p", "duration_s": 6,
-                   "enhance": False, "size_mode": "aspect"}
+    assert t2v == {"mode": "t2v", "prompt": "p", "duration_s": 6}
     i2v = ap.flf_body(prompt="p", duration_s=6, first_name="a.png",
                       last_name="b.png", size_mode="source")
     assert i2v["first_image"] == "a.png" and i2v["last_image"] == "b.png"
