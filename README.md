@@ -145,6 +145,22 @@ replace the preset verbatim. The LLM always receives the target video
 duration and each reference's duration, so timestamps land on the real
 clock.
 
+## `Show Text Brabo` (`ShowTextBrabo`)
+
+A text preview that **stays in the workflow**. Feed it any socket (`source`) —
+a `STRING`, a number, a dict — and it renders the value in a multiline widget
+and passes the same text through its `text` output, so it can sit mid-chain.
+
+The built-in *Preview as Text* renders into a widget flagged `serialize: false`,
+so its text is gone the moment you reopen the workflow. Here the widget is a
+declared `STRING` input, which litegraph saves into `widgets_values` and
+restores on load — the last run's output travels inside the workflow JSON, and
+is still on screen when the node is served from cache.
+
+The widget is editable (the frontend has no read-only mode for a serialising
+string widget). Anything typed there is display only: it is discarded and
+overwritten by the next execution, and never reaches the `text` output.
+
 ## Design docs
 
 `SPEC.md` is the full design (behavior contract, error catalog §8, JSON

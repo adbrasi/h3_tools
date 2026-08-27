@@ -18,11 +18,12 @@ except ImportError:
         "client nodes. Update ComfyUI to master for the local Pro nodes.")
 
 from .h3_tools.api_nodes import API_NODES  # noqa: E402
+from .h3_tools.show_text import SHOW_TEXT_NODES  # noqa: E402
 
 
 class H3ToolsExtension(ComfyExtension):
     async def get_node_list(self):
-        return _NATIVE_NODES + API_NODES
+        return _NATIVE_NODES + API_NODES + SHOW_TEXT_NODES
 
 
 async def comfy_entrypoint() -> H3ToolsExtension:
