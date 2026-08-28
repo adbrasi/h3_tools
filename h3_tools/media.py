@@ -1,9 +1,11 @@
 """Media decode for references — thin wrappers over the native loader nodes.
 
-Decoding calls the core loader node classes themselves (LoadImage, LoadVideo +
-GetVideoComponents, LoadAudio) so results are byte-identical to a hand-wired
-native graph. The only pack-owned media logic is the 24 fps resample, which
-has no native equivalent. All ComfyUI/torch/PIL imports are lazy so this
+Decoding calls the core loader node classes themselves (LoadImage, LoadVideo,
+LoadAudio) so results are byte-identical to a hand-wired native graph. Video
+components come from VIDEO.get_components(), the same call GetVideoComponents
+makes -- its socket list grows between ComfyUI releases, its data does not.
+The only pack-owned media logic is the 24 fps resample, which has no native
+equivalent. All ComfyUI/torch/PIL imports are lazy so this
 module imports (and resample_indices tests run) without ComfyUI.
 """
 
@@ -48,9 +50,10 @@ def load_video_ref(file, name):
     """{"frames": [T, H, W, C] at 24 fps, "audio": dict | None, "duration": float}"""
     from comfy_extras import nodes_video
     video = nodes_video.LoadVideo.execute(file=file).args[0]
-    frames, audio, fps, _bit_depth = nodes_video.GetVideoComponents.execute(video=video).args
+    components = video.get_components()
+    frames, audio = components.images, components.audio
     n_src = int(frames.shape[0])
-    fps = float(fps)
+    fps = float(components.frame_rate)
     if fps <= 0 or n_src <= 0:
         raise MediaError('could not read frames from reference video "@%s" (%s)'
                          % (name, file))
