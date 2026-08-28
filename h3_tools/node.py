@@ -20,15 +20,27 @@ import nodes
 from comfy_extras.nodes_minimax_h3 import MiniMaxH3ReferenceToVideo, align_frame_count
 from comfy_api.latest import io
 
-from . import continuation, enhancer, media, refs
+from . import continuation, media, refs
 from .enhancer_flow import (_decode_refs, _enhancer_inputs,
                             _reference_vision_parts, _run_enhancer,
                             _unknown_mentions_message)
-from .system_prompts import SYSTEM_PROMPTS_CONTINUE
+
+
+# appended after the enhancer block on purpose: workflow JSON stores widget
+# values by position, so a new widget must never enter the middle of the list
+def _ref_video_size_input():
+    return io.Combo.Input(
+        "ref_video_size", options=list(media.REF_VIDEO_SIZES), default="source",
+        tooltip="Downscale reference videos before encoding (short edge). "
+        "Reference-video resolution dominates sampling time — 480p can be "
+        "several times faster than 720p for the same clip, and camera or "
+        "motion structure survives the downscale. Use 'source' when a video "
+        "must carry identity or fine detail.")
 
 
 def _encode_native(clip, vae, audio_vae, final_prompt, width, height, length,
-                   ref_image_size, ref_list, payloads, target_duration):
+                   ref_image_size, ref_list, payloads, target_duration,
+                   ref_video_size="source"):
     """Assemble the native Autogrow dicts and delegate the encode."""
     # keys paired by trailing index (soundtrack N <-> video N)
     groups = {"ref_images": {}, "ref_videos": {}, "ref_video_audios": {}, "ref_audios": {}}
@@ -37,7 +49,8 @@ def _encode_native(clip, vae, audio_vae, final_prompt, width, height, length,
         if group == "ref_images":
             groups[group][key] = payload
         elif group == "ref_videos":
-            groups[group][key] = payload["frames"]
+            groups[group][key] = media.fit_ref_video(payload["frames"],
+                                                     ref_video_size, name)
         elif group == "ref_video_audios":
             groups[group][key] = payload["soundtrack"]
         else:
@@ -86,7 +99,7 @@ class H3RefToVideoPro(io.ComfyNode):
                     tooltip="Reference image sizing, passed through to the native node. "
                             "'match' scales refs to the generation's pixel area; 'max' "
                             "keeps up to a 2048px short edge (better identity, slower)."),
-            ] + _enhancer_inputs(enhancer.SYSTEM_PROMPTS),
+            ] + _enhancer_inputs() + [_ref_video_size_input()],
             outputs=[
                 io.Conditioning.Output(display_name="positive"),
                 io.Latent.Output(),
@@ -149,7 +162,7 @@ class H3RefToVideoPro(io.ComfyNode):
     def execute(cls, clip, vae, audio_vae, prompt, references, width, height, length,
                 ref_image_size, enhance_prompt, enhancer_model, enhancer_model_fallback,
                 enhancer_reasoning, openrouter_api_key, enhancer_vision, vision_format,
-                system_prompt_preset, enhancer_seed,
+                system_prompt_preset, enhancer_seed, ref_video_size="source",
                 system_prompt_override=None) -> io.NodeOutput:
         ref_list = refs.parse_references(references)
         unknown = refs.unknown_mentions(prompt, ref_list)
@@ -189,7 +202,7 @@ class H3RefToVideoPro(io.ComfyNode):
 
         cond, latent = _encode_native(clip, vae, audio_vae, final_prompt, width,
                                       height, length, ref_image_size, ref_list,
-                                      payloads, target_duration)
+                                      payloads, target_duration, ref_video_size)
         pbar.update(1)
         return io.NodeOutput(cond, latent, final_prompt)
 
@@ -242,7 +255,7 @@ class H3RefToVideoContinuePro(io.ComfyNode):
                     tooltip="Reference image sizing, passed through to the native node. "
                             "'match' scales refs to the generation's pixel area; 'max' "
                             "keeps up to a 2048px short edge (better identity, slower)."),
-            ] + _enhancer_inputs(SYSTEM_PROMPTS_CONTINUE),
+            ] + _enhancer_inputs() + [_ref_video_size_input()],
             outputs=[
                 io.Conditioning.Output(display_name="positive"),
                 io.Latent.Output(),
@@ -260,8 +273,9 @@ class H3RefToVideoContinuePro(io.ComfyNode):
                 length, duration_mode, ref_image_size, enhance_prompt,
                 enhancer_model, enhancer_model_fallback, enhancer_reasoning,
                 openrouter_api_key, enhancer_vision, vision_format,
-                system_prompt_preset, enhancer_seed, video=None,
-                image_last_frame=None, system_prompt_override=None) -> io.NodeOutput:
+                system_prompt_preset, enhancer_seed, ref_video_size="source",
+                video=None, image_last_frame=None,
+                system_prompt_override=None) -> io.NodeOutput:
         ref_list = refs.parse_references(references)
         unknown = refs.unknown_mentions(prompt, ref_list)
         if unknown:
@@ -322,7 +336,7 @@ class H3RefToVideoContinuePro(io.ComfyNode):
                 vision=enhancer_vision, preset=system_prompt_preset,
                 system_override=system_prompt_override, seed=enhancer_seed,
                 target_duration=t["total_duration"], vision_format=vision_format,
-                system_prompts=SYSTEM_PROMPTS_CONTINUE,
+                continue_job=True,
                 context_parts=context_parts, context_sha=context_sha,
                 duration_mode=duration_mode, video_sent=video_sent)
             logging.info("h3_tools: enhancer done in %.1fs",
@@ -338,6 +352,7 @@ class H3RefToVideoContinuePro(io.ComfyNode):
 
         cond, latent = _encode_native(clip, vae, audio_vae, final_prompt, width,
                                       height, t["latent_length"], ref_image_size,
-                                      ref_list, payloads, t["total_duration"])
+                                      ref_list, payloads, t["total_duration"],
+                                      ref_video_size)
         pbar.update(1)
         return io.NodeOutput(cond, latent, final_prompt)

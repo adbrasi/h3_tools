@@ -118,10 +118,11 @@ transport inputs, no state in `node.properties`**):
 | `enhancer_model_fallback` | String | `""` | optional second model slug, tried with the full retry policy when the main model fails for good (timeout, provider error, unparseable output); empty disables it. Cache entries are per-model |
 | `enhancer_reasoning` | Combo `none`\|`low`\|`medium`\|`high`\|`xhigh` | `none` | reasoning effort sent to OpenRouter; `none` sends `{"enabled": false}` (fastest — reasoning tokens are serial and dominate wall-clock). Part of the cache key |
 | `openrouter_api_key` | String | `""` | empty → fall back to env `OPENROUTER_API_KEY`; missing both (with enhancer on) is an execution error |
-| `enhancer_vision` | Boolean | `false` | send reference images (and 1 frame per video) to the LLM |
-| `system_prompt_preset` | Combo (keys of `SYSTEM_PROMPTS`) | `default` | one shared core (official H3 six-section format from `guide.md` + shot-script craft rules + a full worked output example); presets differ only by their OBJECTIVE block: `default`, `multishot`, `single_take` |
+| `enhancer_vision` | Boolean | `false` | send the references to the LLM: images as pictures, **reference videos as VIDEO** (a still carries no camera path, motion or timing). With a reference video attached the enhancer model must accept video input, else execution errors |
+| `system_prompt_preset` | Combo (`system_prompts.PRESETS`) | `default` | one shared core (official H3 six-section format from `guide.md` + shot-script craft rules + a full worked output example); presets differ only by their OBJECTIVE block: `default`, `multishot`, `single_take` |
 | `system_prompt_override` | STRING **connection** (`force_input`), optional | — | a connected non-empty string replaces the chosen preset verbatim |
 | `enhancer_seed` | Int | 0 | part of the enhancer cache key; bump to re-roll the LLM |
+| `ref_video_size` | Combo `source`\|`720p`\|`480p`\|`360p` | `source` | downscales reference-video frames (short edge, snapped to a multiple of 16) before the native encode. Reference-video resolution dominates sampling time; camera/motion structure survives the downscale, identity does not. Appended LAST in the input list so stored widget positions hold. Local nodes only — the API nodes upload the source file |
 
 All enhancer widgets are plain optional widgets — no dynamic show/hide of widget rows
 in v1 (competitors' conditional-row code was a major fragility source).
@@ -287,14 +288,29 @@ LLM reads and must preserve `@name` tokens, never raw `<Picture i>` tags.
      soundtracks: `- @name's soundtrack (audio)`.
   2. if `enhancer_vision`: for each image ref, a text part `@name (image):` followed by
      an `image_url` part (data URL, JPEG q85, long edge ≤ 1024); for each video ref,
-     the same with one frame sampled from the middle of the clip. Audio is never sent.
+     a text part `@name (video):` followed by a `video_url` part — the WHOLE clip as a
+     silent mp4 (long edge ≤ 768, ~10 fps; a clip past the frame budget loses frame
+     rate, never its ending). Audio is never sent.
 - **Built-in system prompts**: one shared core (`h3_tools/system_prompts.py`)
   synthesized from `guide.md` (official H3 six-section full-reference format,
   including its complete worked example converted to `@name` tokens) plus the
   owner's shot-script craft material (one-primary-camera-move rule, rhythm
   words over gear specs, camera/subject motion separated, banned vague words,
   physical specificity, timecoded shots with a setup→development→payoff arc).
-  Presets swap only the OBJECTIVE block. Contract every preset implements:
+  Presets swap only the OBJECTIVE block. A prompt is composed on four
+  independent axes by `system_prompts.system_prompt(preset, continuation=,
+  video=)`: objective, the CONTINUATION block (§12.5), and a **VIDEO REFERENCE
+  block** spliced only when the job has reference videos — variant `seen` when
+  the clips were attached to the LLM call (`enhancer_vision` on), `unseen`
+  otherwise. The block owns every video rule: identity-vs-structure fork
+  (structure videos require BOTH a `subject_definitions` and a
+  `retention_analysis` line), dimension taxonomy with template sentences,
+  visible-content retention markers with the dimension in parentheses and the
+  discard named, the reference's own shot structure outranking the OBJECTIVE,
+  no re-authoring of a camera the video controls, and one imperative mention
+  per shot it governs. The no-video EXAMPLE is deliberately image+audio only —
+  an example showing a reference video with no line of its own is what taught
+  the enhancer to leave `<Video 1>` undefined. Contract every preset implements:
   preserve every `@name` token spelled identically; never invent `@` tokens;
   never describe media content not shown; fit all timestamps inside the
   provided "Target video duration: X.Xs" line; output only
@@ -592,8 +608,9 @@ ComfyUI built-ins can produce them; nothing is uploaded through the board.
 ### 12.5 Enhancer changes
 
 - **System prompts**: same core and the same 3 presets; `system_prompts.py`
-  gains a CONTINUATION block injected between OBJECTIVE and the shared tail
-  (exported as `SYSTEM_PROMPTS_CONTINUE`, same keys). Constraints for its
+  gains a CONTINUATION block injected between OBJECTIVE and the shared core
+  (`system_prompt(preset, continuation=True)`; `SYSTEM_PROMPTS_CONTINUE` is
+  the no-video variant of that). Constraints for its
   author: the existing footage is established fact — continue subjects,
   light, camera and motion coherently from the final frame; timestamps per
   §12.3; the `[video continuation]` summary prefix is encouraged; the source
@@ -607,7 +624,7 @@ ComfyUI built-ins can produce them; nothing is uploaded through the board.
   sha256 of the exact encoded payload sent (video or image data URL) — socket
   tensors have no file stats.
 - Continue-node context media is sent whenever the enhancer is on;
-  `enhancer_vision` keeps controlling reference images only.
+  `enhancer_vision` controls the reference media (images and videos).
 
 ### 12.6 Shared improvement: `vision_format` (Combo, BOTH nodes, default `default`)
 

@@ -215,3 +215,54 @@ def test_filter_models_ignores_routing_suffix():
         ["google/gemini-3-flash-preview:nitro"], supported)
     assert usable == ["google/gemini-3-flash-preview:nitro"]
     assert skipped == []
+
+
+# ---- video-reference system prompt variants ------------------------------
+
+def test_video_block_only_when_the_job_has_reference_videos():
+    from h3_tools import system_prompts as sp
+    assert "VIDEO REFERENCE" not in sp.system_prompt("default")
+    for mode in ("seen", "unseen"):
+        text = sp.system_prompt("default", video=mode)
+        assert "VIDEO REFERENCE" in text
+        # spliced after the shared core and before the hard rules
+        assert text.index("THE CRAFT") < text.index("VIDEO REFERENCE")
+        assert text.index("VIDEO REFERENCE") < text.index("HARD RULES")
+
+
+def test_video_block_evidence_matches_whether_the_clips_were_attached():
+    from h3_tools import system_prompts as sp
+    seen = sp.system_prompt("default", video="seen")
+    unseen = sp.system_prompt("default", video="unseen")
+    assert "you have watched them" in seen
+    assert "you have not watched them" in unseen
+    # the "seen" variant is the only one that licenses describing the clip
+    assert "REQUIRED here, not forbidden" in seen
+    assert "REQUIRED here, not forbidden" not in unseen
+
+
+def test_base_example_never_teaches_an_undefined_reference_video():
+    from h3_tools import system_prompts as sp
+    # the no-video EXAMPLE is image+audio only: a video in it with no line of
+    # its own is what taught the enhancer to leave <Video 1> undefined
+    text = sp.system_prompt("default")
+    example = text[text.index("EXAMPLE"):]
+    assert "(video" not in example
+
+
+def test_video_and_continuation_compose():
+    from h3_tools import system_prompts as sp
+    text = sp.system_prompt("multishot", continuation=True, video="seen")
+    for marker in ("CONTINUATION", "VIDEO REFERENCE", "HARD RULES"):
+        assert marker in text
+    assert text.index("CONTINUATION") < text.index("VIDEO REFERENCE")
+
+
+def test_unknown_preset_and_video_mode_raise():
+    import pytest as _pytest
+
+    from h3_tools import system_prompts as sp
+    with _pytest.raises(KeyError):
+        sp.system_prompt("nope")
+    with _pytest.raises(ValueError):
+        sp.system_prompt("default", video="maybe")

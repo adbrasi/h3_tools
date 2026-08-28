@@ -19,10 +19,9 @@ import comfy.utils
 import folder_paths
 from comfy_api.latest import InputImpl, io
 
-from . import api_payload, continuation, enhancer, media, modal_client, refs
+from . import api_payload, continuation, media, modal_client, refs
 from .enhancer_flow import (_decode_refs, _enhancer_inputs, _run_enhancer,
                             _unknown_mentions_message)
-from .system_prompts import SYSTEM_PROMPTS_CONTINUE
 
 Payload = io.Custom("H3_API_PAYLOAD")
 
@@ -232,7 +231,7 @@ class H3ApiPrepareRef(io.ComfyNode):
                     tooltip="Final video duration in seconds (snapped to the "
                             "17k+5 frame grid). Lives here because the "
                             "enhancer writes against this exact clock."),
-            ] + _enhancer_inputs(enhancer.SYSTEM_PROMPTS),
+            ] + _enhancer_inputs(),
             outputs=[
                 Payload.Output(display_name="payload"),
                 io.String.Output(display_name="final_prompt",
@@ -315,7 +314,7 @@ class H3ApiPrepareRefContinue(io.ComfyNode):
                             "seconds added on top of the source."),
                 io.Combo.Input("duration_mode", options=["total", "new_only"],
                     default="total"),
-            ] + _enhancer_inputs(SYSTEM_PROMPTS_CONTINUE),
+            ] + _enhancer_inputs(),
             outputs=[
                 Payload.Output(display_name="payload"),
                 io.String.Output(display_name="final_prompt",
@@ -373,7 +372,7 @@ class H3ApiPrepareRefContinue(io.ComfyNode):
                 vision=enhancer_vision, preset=system_prompt_preset,
                 system_override=system_prompt_override, seed=enhancer_seed,
                 target_duration=t["total_duration"], vision_format=vision_format,
-                system_prompts=SYSTEM_PROMPTS_CONTINUE,
+                continue_job=True,
                 context_parts=context_parts, context_sha=context_sha,
                 duration_mode=duration_mode, video_sent=True)
             pbar.update(1)

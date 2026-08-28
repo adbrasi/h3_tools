@@ -135,3 +135,51 @@ def test_load_video_ref_rejects_too_short_clip(monkeypatch):
 
     with pytest.raises(media.MediaError, match="shorter than"):
         media.load_video_ref("clip.mp4", "video_1")
+
+
+# --- ref_video_target: the H3 reference-video downscale ---------------------
+
+def test_ref_video_target_source_keeps_frames():
+    assert media.ref_video_target(720, 1280, "source") is None
+
+
+def test_ref_video_target_never_upscales():
+    assert media.ref_video_target(360, 640, "720p") is None
+    assert media.ref_video_target(480, 854, "480p") is None
+
+
+def test_ref_video_target_scales_by_short_edge_snapped_to_16():
+    # 720x1280 landscape -> short edge 480
+    h, w = media.ref_video_target(720, 1280, "480p")
+    assert h == 480 and w == 848  # 853.3 snapped down to a multiple of 16
+    assert h % 16 == 0 and w % 16 == 0
+
+
+def test_ref_video_target_handles_vertical():
+    h, w = media.ref_video_target(1920, 1080, "480p")
+    assert w == 480 and h % 16 == 0
+    assert h == 848
+
+
+def test_ref_video_target_unknown_size_keeps_frames():
+    assert media.ref_video_target(720, 1280, "nonsense") is None
+
+
+# --- llm_video_fps: whole clip always, frame rate is what gives ------------
+
+def test_llm_video_fps_short_clip_uses_target():
+    assert media.llm_video_fps(8.0) == media.LLM_FPS
+
+
+def test_llm_video_fps_long_clip_drops_rate_instead_of_truncating():
+    fps = media.llm_video_fps(120.0, max_frames=360)
+    assert fps == 3.0
+    assert 120.0 * fps <= 360
+
+
+def test_llm_video_fps_never_exceeds_the_decoded_rate():
+    assert media.llm_video_fps(2.0, target_fps=99.0) == media.TARGET_FPS
+
+
+def test_llm_video_fps_degenerate_duration():
+    assert media.llm_video_fps(0.0) == media.LLM_FPS

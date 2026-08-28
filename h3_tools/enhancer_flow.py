@@ -11,7 +11,7 @@ import os
 import folder_paths
 from comfy_api.latest import io
 
-from . import continuation, enhancer, media
+from . import continuation, enhancer, media, system_prompts
 
 
 def _unknown_mentions_message(unknown, ref_list):
@@ -46,24 +46,33 @@ def _decode_refs(ref_list, pbar):
 
 
 def _reference_vision_parts(ref_list, payloads):
-    """(label, image) part pairs for enhancer_vision; audio is never sent."""
+    """(label, media) part pairs for enhancer_vision; audio is never sent.
+
+    Reference videos go as VIDEO, not as a still: a camera path, a
+    choreography and a timing — the three things a reference video exists
+    to carry — are invisible in a single frame, and an enhancer that cannot
+    see them can only write "the camera motion is referenced from @clip".
+    """
     parts = []
     for r in ref_list:
         if r.type == "image":
-            url = media.image_data_url(payloads[r.name])
+            part = {"type": "image_url",
+                    "image_url": {"url": media.image_data_url(payloads[r.name])}}
         elif r.type == "video":
-            url = media.image_data_url(media.middle_frame(payloads[r.name]["frames"]))
+            part = {"type": "video_url",
+                    "video_url": {"url": media.encode_video_ref(payloads[r.name],
+                                                                r.name)}}
         else:
             continue
         parts.append({"type": "text", "text": "@%s (%s):" % (r.name, r.type)})
-        parts.append({"type": "image_url", "image_url": {"url": url}})
+        parts.append(part)
     return parts
 
 
 def _run_enhancer(prompt, ref_list, payloads, durations, *, model,
                   fallback_model, reasoning, api_key_widget, vision, preset,
                   system_override, seed, target_duration,
-                  vision_format="default", system_prompts=None,
+                  vision_format="default", continue_job=False,
                   context_parts=None, context_sha=None, duration_mode=None,
                   video_sent=False):
     api_key = api_key_widget or os.environ.get("OPENROUTER_API_KEY", "")
@@ -72,15 +81,28 @@ def _run_enhancer(prompt, ref_list, payloads, durations, *, model,
             "enhance_prompt is on but no OpenRouter key was found: fill the "
             "openrouter_api_key widget or set the OPENROUTER_API_KEY "
             "environment variable")
+    # a reference video is only worth prompting for if the LLM can see it:
+    # "seen" licenses describing the clip, "unseen" limits the rewrite to what
+    # the draft says about it
+    n_ref_videos = sum(1 for r in ref_list if r.type == "video")
+    refs_video_sent = bool(vision and n_ref_videos)
+    video_mode = ("none" if not n_ref_videos
+                  else "seen" if refs_video_sent else "unseen")
     if system_override and system_override.strip():
         system_prompt = system_override
     else:
-        system_prompt = (system_prompts or enhancer.SYSTEM_PROMPTS)[preset]
+        system_prompt = system_prompts.system_prompt(
+            preset, continuation=continue_job, video=video_mode)
+    if video_mode != "none":
+        logging.info("h3_tools: %d reference video(s), system prompt video "
+                     "mode %r", n_ref_videos, video_mode)
 
     models = [model]
     fallback_model = (fallback_model or "").strip()
     if fallback_model and fallback_model != model:
         models.append(fallback_model)
+    context_video_sent = video_sent
+    video_sent = video_sent or refs_video_sent
     if video_sent:
         supported = continuation.fetch_video_models()
         models, skipped = continuation.filter_models_for_video(models, supported)
@@ -88,11 +110,17 @@ def _run_enhancer(prompt, ref_list, payloads, durations, *, model,
             logging.warning("h3_tools: model %s does not accept video input; "
                             "skipping it in the fallback chain", m)
         if not models:
+            ways = []
+            if refs_video_sent:
+                ways.append("turn enhancer_vision off (the reference videos "
+                            "then reach the LLM as text only)")
+            if context_video_sent:
+                ways.append("connect image_last_frame instead of video")
             raise ValueError(
                 "none of the configured models (%s) accepts video input — "
                 "pick a video-capable model (see openrouter.ai/models?"
-                "input_modalities=video) or connect image_last_frame instead "
-                "of video" % ", ".join(skipped))
+                "input_modalities=video), or %s"
+                % (", ".join(skipped), " or ".join(ways)))
 
     ref_stats = []
     for r in ref_list:
@@ -136,7 +164,7 @@ def _run_enhancer(prompt, ref_list, payloads, durations, *, model,
     return clean
 
 
-def _enhancer_inputs(presets):
+def _enhancer_inputs():
     """The enhancer widget block, shared by both nodes."""
     return [
         io.Boolean.Input("enhance_prompt", default=False,
@@ -161,9 +189,12 @@ def _enhancer_inputs(presets):
                     "payloads (/history), so prefer the env var on shared or "
                     "serverless hosts."),
         io.Boolean.Input("enhancer_vision", default=False,
-            tooltip="Send reference images (and one frame per video) to the LLM."),
+            tooltip="Send the references to the LLM: images as pictures, reference "
+                    "videos as VIDEO. Required for a reference video to be used for "
+                    "its camera path, motion or timing — the model must accept video "
+                    "input (e.g. gemini-3-flash-preview)."),
         io.Combo.Input("system_prompt_preset",
-            options=list(presets.keys()), default="default",
+            options=list(system_prompts.PRESETS), default="default",
             tooltip="Built-in enhancer system prompt: what kind of video the "
                     "LLM should write for (multishot, single take, ...)."),
         io.String.Input("system_prompt_override", optional=True, force_input=True,
