@@ -18,6 +18,11 @@ const TRIGGER_RE = /(?<![A-Za-z0-9_])@([A-Za-z0-9_]*)$/;
 const TYPE_ICONS = { image: "\u{1F5BC}", video: "\u{1F3AC}", audio: "♪" };
 const TYPE_LABELS = { image: "Imagem", video: "Vídeo", audio: "Áudio" };
 const ACCEPT = { image: "image/*", video: "video/*", audio: "audio/*" };
+// The board's real minimum height, in graph units. ComfyUI's layout reads it
+// through getMinHeight(); without it computeLayoutSize() falls back to 50 and
+// the node reserves 50px for a board that needs ~260 — which is why the board
+// used to render outside the node body on open.
+const MIN_BOARD_HEIGHT = 260;
 
 // ---- shared helpers -------------------------------------------------------
 
@@ -652,10 +657,31 @@ function setupNode(node) {
 
   // ---- attach as a DOM widget (kept LAST so widgets_values stays aligned
   // for workflows loaded without this extension)
-  const boardWidget = node.addDOMWidget("h3_board", "div", root, { serialize: false });
+  const boardWidget = node.addDOMWidget("h3_board", "div", root, {
+    serialize: false,
+    // the size contract: the element must never be bigger than the box the
+    // layout gives it, so the minimum is declared HERE and never in CSS
+    getMinHeight: () => MIN_BOARD_HEIGHT,
+  });
   // options.serialize=false excludes it from the API prompt; the top-level
   // flag is what LGraphNode.serialize checks for workflow persistence
   if (boardWidget) boardWidget.serialize = false;
+  // one-shot diagnostic: window.__h3diag() prints the box the layout handed
+  // this widget next to the box the element actually occupies
+  window.__h3diag = () => {
+    const el = root, par = root.parentElement;
+    return {
+      nodeSize: [...node.size],
+      widgetWidth: boardWidget?.width,
+      computedHeight: boardWidget?.computedHeight,
+      parent: par && [par.getBoundingClientRect().width,
+                      par.getBoundingClientRect().height],
+      element: [el.getBoundingClientRect().width,
+                el.getBoundingClientRect().height],
+      parentInlineWidth: par?.style?.width,
+      scale: app.canvas?.ds?.scale,
+    };
+  };
 
   node.__h3refresh = () => {
     textarea.value = promptWidget.value ?? "";
@@ -668,8 +694,10 @@ function setupNode(node) {
   };
 
   node.__h3refresh();
+  // computeSize() now accounts for the board (getMinHeight above), so the
+  // node opens tall enough instead of clipping the board outside its body
   const size = node.computeSize();
-  node.setSize([Math.max(node.size[0], 380), Math.max(node.size[1], size[1], 560)]);
+  node.setSize([Math.max(node.size[0], 380), Math.max(node.size[1], size[1])]);
 }
 
 // ---- extension ------------------------------------------------------------
