@@ -3,6 +3,7 @@ import logging
 import os
 
 import pytest
+import requests
 
 from h3_tools import enhancer, refs
 from h3_tools.enhancer import EnhancerError
@@ -568,8 +569,6 @@ class FakeStreamResp:
 
 @pytest.mark.parametrize("encoding", [None, "ISO-8859-1"])
 def test_stream_preserves_utf8_without_charset(encoding):
-    import requests
-
     text = "Eu volto amanhã. Espere por mim. 日本語"
     chunk = {"choices": [{"delta": {"content": text}}]}
     response = requests.Response()
