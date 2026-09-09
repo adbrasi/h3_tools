@@ -662,6 +662,9 @@ function setupNode(node) {
     // the size contract: the element must never be bigger than the box the
     // layout gives it, so the minimum is declared HERE and never in CSS
     getMinHeight: () => MIN_BOARD_HEIGHT,
+    // ComfyUI prefers widget.width over node.width for the DOM container.
+    // Keep it in sync even if a panel or a loaded workflow left a stale width.
+    onDraw: (widget) => { widget.width = widget.node.size[0]; },
   });
   // options.serialize=false excludes it from the API prompt; the top-level
   // flag is what LGraphNode.serialize checks for workflow persistence
