@@ -566,6 +566,22 @@ class FakeStreamResp:
         return iter(self._lines)
 
 
+@pytest.mark.parametrize("encoding", [None, "ISO-8859-1"])
+def test_stream_preserves_utf8_without_charset(encoding):
+    import requests
+
+    text = "Eu volto amanhã. Espere por mim. 日本語"
+    chunk = {"choices": [{"delta": {"content": text}}]}
+    response = requests.Response()
+    response.headers["Content-Type"] = "text/event-stream"
+    response.encoding = encoding
+    response._content = ("data: " + json.dumps(chunk, ensure_ascii=False)
+                         + "\n\ndata: [DONE]\n\n").encode("utf-8")
+    response._content_consumed = True
+    content, _ = enhancer._drain_stream(response)
+    assert content == text
+
+
 def test_enhance_streams_and_assembles_content():
     bodies = []
     lines = [

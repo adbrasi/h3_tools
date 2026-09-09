@@ -151,7 +151,8 @@ def cache_key(prompt, ref_stats, model, system, vision, seed, duration=None,
     # duration, reasoning, duration_mode, vision_format and the continuation
     # payload hash are part of the LLM's input/behavior, so they are part of
     # the key; width/height stay out on purpose
-    payload = {"prompt": prompt, "refs": ref_stats, "model": model,
+    # Invalidate responses cached before the UTF-8 SSE decoding fix.
+    payload = {"version": 2, "prompt": prompt, "refs": ref_stats, "model": model,
                "system": system, "vision": bool(vision), "seed": seed,
                "duration": duration, "reasoning": reasoning,
                "duration_mode": duration_mode, "vision_format": vision_format,
@@ -204,6 +205,8 @@ def _drain_stream(resp, log_every=1.5, clock=None):
             logging.info("h3_tools: enhancer ▸ %s", "".join(pending).strip())
             del pending[:]
 
+    # SSE is UTF-8 even when text/event-stream has no charset parameter.
+    resp.encoding = "utf-8"
     for raw in resp.iter_lines(decode_unicode=True):
         if not raw or not raw.startswith("data:"):
             continue
